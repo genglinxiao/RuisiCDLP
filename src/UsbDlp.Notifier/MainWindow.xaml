@@ -1,0 +1,28 @@
+<Window x:Class="UsbDlp.Notifier.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Request USB device access" Height="620" Width="540" MinHeight="560" MinWidth="440"
+        WindowStartupLocation="CenterScreen" Background="#F1EFE8" FontFamily="Segoe UI" ShowInTaskbar="False" Closing="Window_Closing">
+  <Window.Resources>
+    <Style TargetType="TextBox"><Setter Property="Padding" Value="10"/><Setter Property="BorderBrush" Value="#B4B2A9"/><Setter Property="BorderThickness" Value="1"/><Setter Property="Background" Value="White"/></Style>
+    <Style TargetType="ComboBox"><Setter Property="Padding" Value="8"/><Setter Property="BorderBrush" Value="#B4B2A9"/><Setter Property="Background" Value="White"/></Style>
+    <Style TargetType="Button"><Setter Property="Padding" Value="14,8"/><Setter Property="Cursor" Value="Hand"/><Setter Property="BorderThickness" Value="1"/></Style>
+  </Window.Resources>
+  <Grid Margin="24">
+    <Border Background="White" BorderBrush="#D3D1C7" BorderThickness="1" CornerRadius="14" Padding="24">
+      <Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <StackPanel Orientation="Horizontal"><Border Background="#FAEEDA" CornerRadius="10" Width="42" Height="42"><TextBlock Text="USB" Foreground="#854F0B" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center"/></Border><StackPanel Margin="12,0,0,0"><TextBlock x:Name="HeadingText" Text="Request USB device access" FontSize="17" FontWeight="SemiBold"/><TextBlock x:Name="ConnectionText" Text="Connecting to workstation service…" Foreground="#888780" FontSize="12"/></StackPanel></StackPanel>
+        <Border Grid.Row="1" Background="#FCEBEB" CornerRadius="8" Padding="13" Margin="0,20,0,16"><StackPanel><TextBlock x:Name="BlockedHeadingText" Text="This device is blocked" Foreground="#A32D2D" FontWeight="SemiBold"/><TextBlock x:Name="ReasonText" Text="Waiting for a blocked device event." Foreground="#5F5E5A" TextWrapping="Wrap" Margin="0,4,0,0"/></StackPanel></Border>
+        <Grid Grid.Row="2" Margin="0,0,0,18"><Grid.ColumnDefinitions><ColumnDefinition Width="110"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><Grid.RowDefinitions><RowDefinition/><RowDefinition/><RowDefinition/></Grid.RowDefinitions>
+          <TextBlock x:Name="DeviceLabel" Text="Device" Foreground="#888780" Margin="0,3"/><TextBlock x:Name="DeviceNameText" Grid.Column="1" Text="—" FontWeight="SemiBold" Margin="0,3"/>
+          <TextBlock x:Name="InstanceLabel" Grid.Row="1" Text="Instance ID" Foreground="#888780" Margin="0,3"/><TextBlock x:Name="InstanceIdText" Grid.Row="1" Grid.Column="1" Text="—" FontFamily="Cascadia Mono" FontSize="11" TextWrapping="Wrap" Margin="0,3"/>
+          <TextBlock x:Name="IdentifierLabel" Grid.Row="2" Text="Identifier" Foreground="#888780" Margin="0,3"/><TextBlock x:Name="VidPidText" Grid.Row="2" Grid.Column="1" Text="—" FontFamily="Cascadia Mono" Margin="0,3"/>
+        </Grid>
+        <StackPanel Grid.Row="3"><TextBlock x:Name="DurationLabel" Text="Requested duration" Foreground="#5F5E5A" Margin="0,0,0,6"/><ComboBox x:Name="DurationBox" SelectedIndex="2"><ComboBoxItem Tag="1">1 day</ComboBoxItem><ComboBoxItem Tag="7">7 days</ComboBoxItem><ComboBoxItem Tag="30">30 days</ComboBoxItem><ComboBoxItem Tag="90">90 days</ComboBoxItem></ComboBox></StackPanel>
+        <StackPanel Grid.Row="4" Margin="0,16,0,0"><TextBlock x:Name="JustificationLabel" Text="Business justification" Foreground="#5F5E5A" Margin="0,0,0,6"/><TextBox x:Name="JustificationBox" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="95" MaxLength="2000" VerticalScrollBarVisibility="Auto"/><TextBlock x:Name="JustificationHint" Text="Explain why this device is needed (10–2000 characters)." Foreground="#888780" FontSize="11" Margin="0,5,0,0"/></StackPanel>
+        <Border Grid.Row="5" Background="#F1EFE8" CornerRadius="8" Padding="10" Margin="0,16,0,12"><TextBlock x:Name="PrivacyText" Text="Your request goes to IT Security for approval. This device stays blocked until approved. The request and device are logged." Foreground="#5F5E5A" FontSize="12" TextWrapping="Wrap"/></Border>
+        <Grid Grid.Row="6"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBlock x:Name="StatusText" VerticalAlignment="Center" Foreground="#5F5E5A" TextWrapping="Wrap"/><Button x:Name="SubmitButton" Grid.Column="1" Content="Submit request" Background="#185FA5" Foreground="White" BorderBrush="#185FA5" Click="SubmitButton_Click" IsEnabled="False"/></Grid>
+      </Grid>
+    </Border>
+  </Grid>
+</Window>

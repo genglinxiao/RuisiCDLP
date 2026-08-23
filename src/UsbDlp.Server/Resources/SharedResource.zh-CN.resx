@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms</value></resheader>
+  <data name="USB device control" xml:space="preserve"><value>USB 设备管控</value></data>
+  <data name="admin console" xml:space="preserve"><value>管理控制台</value></data>
+  <data name="Dashboard" xml:space="preserve"><value>仪表盘</value></data>
+  <data name="Policies" xml:space="preserve"><value>策略</value></data>
+  <data name="Workstations" xml:space="preserve"><value>工作站</value></data>
+  <data name="Requests" xml:space="preserve"><value>申请</value></data>
+  <data name="Events" xml:space="preserve"><value>事件</value></data>
+  <data name="Settings" xml:space="preserve"><value>设置</value></data>
+  <data name="Agents online" xml:space="preserve"><value>在线终端</value></data>
+  <data name="Blocked today" xml:space="preserve"><value>今日阻止</value></data>
+  <data name="Pending requests" xml:space="preserve"><value>待处理申请</value></data>
+  <data name="Current policy" xml:space="preserve"><value>当前策略</value></data>
+  <data name="Policy layers" xml:space="preserve"><value>策略层级</value></data>
+  <data name="Effective policy combines global, group, and workstation scope." xml:space="preserve"><value>有效策略由全局、组和工作站范围共同组成。</value></data>
+  <data name="Add device" xml:space="preserve"><value>添加设备</value></data>
+  <data name="Recent activity" xml:space="preserve"><value>最近活动</value></data>
+  <data name="No activity has been reported yet. Start a workstation agent to see device events." xml:space="preserve"><value>尚无活动。启动工作站代理后可查看设备事件。</value></data>
+  <data name="Allow or block USB storage and portable devices by identity and scope." xml:space="preserve"><value>按设备标识和范围允许或阻止 USB 存储及便携设备。</value></data>
+  <data name="Add policy entry" xml:space="preserve"><value>添加策略项</value></data>
+  <data name="Display name" xml:space="preserve"><value>显示名称</value></data>
+  <data name="Match type" xml:space="preserve"><value>匹配类型</value></data>
+  <data name="Serial" xml:space="preserve"><value>序列号</value></data>
+  <data name="Instance ID" xml:space="preserve"><value>实例 ID</value></data>
+  <data name="Device class" xml:space="preserve"><value>设备类别</value></data>
+  <data name="Action" xml:space="preserve"><value>操作</value></data>
+  <data name="Scope" xml:space="preserve"><value>范围</value></data>
+  <data name="Scope ID" xml:space="preserve"><value>范围 ID</value></data>
+  <data name="Expires at UTC" xml:space="preserve"><value>UTC 到期时间</value></data>
+  <data name="Mandatory global block" xml:space="preserve"><value>强制全局阻止</value></data>
+  <data name="Publish policy" xml:space="preserve"><value>发布策略</value></data>
+  <data name="Block" xml:space="preserve"><value>阻止</value></data>
+  <data name="Allow" xml:space="preserve"><value>允许</value></data>
+  <data name="Global" xml:space="preserve"><value>全局</value></data>
+  <data name="Group" xml:space="preserve"><value>组</value></data>
+  <data name="Workstation" xml:space="preserve"><value>工作站</value></data>
+  <data name="Enrollment, health, group assignment, and applied policy status." xml:space="preserve"><value>查看注册、健康、组分配和已应用策略状态。</value></data>
+  <data name="Agent" xml:space="preserve"><value>代理</value></data>
+  <data name="Last seen" xml:space="preserve"><value>最后在线</value></data>
+  <data name="Applied policy" xml:space="preserve"><value>已应用策略</value></data>
+  <data name="Health" xml:space="preserve"><value>健康状态</value></data>
+  <data name="Access requests" xml:space="preserve"><value>访问申请</value></data>
+  <data name="Review time-bounded workstation access requests." xml:space="preserve"><value>审核有时限的工作站访问申请。</value></data>
+  <data name="No access requests." xml:space="preserve"><value>没有访问申请。</value></data>
+  <data name="Approve" xml:space="preserve"><value>批准</value></data>
+  <data name="Deny" xml:space="preserve"><value>拒绝</value></data>
+  <data name="Attributable device and agent activity." xml:space="preserve"><value>可追溯的设备和代理活动。</value></data>
+  <data name="Export CSV" xml:space="preserve"><value>导出 CSV</value></data>
+  <data name="Time" xml:space="preserve"><value>时间</value></data>
+  <data name="Type" xml:space="preserve"><value>类型</value></data>
+  <data name="User" xml:space="preserve"><value>用户</value></data>
+  <data name="Device" xml:space="preserve"><value>设备</value></data>
+  <data name="Decision" xml:space="preserve"><value>决策</value></data>
+  <data name="Reason" xml:space="preserve"><value>原因</value></data>
+  <data name="No events reported." xml:space="preserve"><value>尚无事件。</value></data>
+  <data name="Server health, enrollment, groups, administrators, and audit history." xml:space="preserve"><value>服务器健康、注册、组、管理员和审计历史。</value></data>
+  <data name="Database" xml:space="preserve"><value>数据库</value></data>
+  <data name="Healthy" xml:space="preserve"><value>正常</value></data>
+  <data name="Policy version" xml:space="preserve"><value>策略版本</value></data>
+  <data name="Default group" xml:space="preserve"><value>默认组</value></data>
+  <data name="Default deny" xml:space="preserve"><value>默认拒绝</value></data>
+  <data name="Enrollment configuration" xml:space="preserve"><value>注册配置</value></data>
+  <data name="Audit log" xml:space="preserve"><value>审计日志</value></data>
+  <data name="Actor" xml:space="preserve"><value>操作者</value></data>
+  <data name="Target" xml:space="preserve"><value>目标</value></data>
+  <data name="Administrator console" xml:space="preserve"><value>管理员控制台</value></data>
+  <data name="Username" xml:space="preserve"><value>用户名</value></data>
+  <data name="Password" xml:space="preserve"><value>密码</value></data>
+  <data name="Sign in" xml:space="preserve"><value>登录</value></data>
+  <data name="Invalid credentials or bootstrap administrator is not configured." xml:space="preserve"><value>凭据无效或未配置引导管理员。</value></data>
+  <data name="Revoke access" xml:space="preserve"><value>撤销访问</value></data>
+  <data name="Revoke confirmation" xml:space="preserve"><value>确定撤销此设备的批准吗？工作站将在下一次策略轮询后阻止该设备。</value></data>
+</root>

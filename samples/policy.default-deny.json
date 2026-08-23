@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "policyVersion": 42,
+  "generatedAtUtc": "2026-08-18T12:00:00+00:00",
+  "workstationId": "00000000-0000-0000-0000-000000000101",
+  "groupId": "00000000-0000-0000-0000-000000000201",
+  "groupMode": "default_deny",
+  "entries": [
+    {
+      "id": "00000000-0000-0000-0000-000000000001",
+      "matchType": "vid_pid_serial",
+      "vid": "0781",
+      "pid": "5583",
+      "serial": "4C530001230904",
+      "instanceId": null,
+      "deviceClass": null,
+      "displayName": "Approved engineering USB drive",
+      "action": "allow",
+      "mandatory": false,
+      "scopeType": "workstation",
+      "scopeId": "00000000-0000-0000-0000-000000000101",
+      "expiresAtUtc": "2026-08-19T12:00:00+00:00",
+      "note": "Gate A sample",
+      "deviceInstallIds": ["USB\\VID_0781&PID_5583\\4C530001230904"]
+    }
+  ]
+}

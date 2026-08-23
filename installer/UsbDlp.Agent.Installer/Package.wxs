@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+  <Package
+      Name="Ruisi USB DLP Agent"
+      Manufacturer="Ruisi"
+      Version="1.0.0"
+      UpgradeCode="{F721F95B-0DB3-4F02-A465-86D4CE0BC854}"
+      Scope="perMachine"
+      InstallerVersion="500"
+      Compressed="yes">
+
+    <SummaryInformation Description="Ruisi USB device-control workstation agent" />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Ruisi USB DLP Agent is already installed." />
+
+    <Property Id="SERVERURL" Value="https://127.0.0.1:5091" Secure="yes" />
+    <Property Id="ENROLLMENTTOKENFILE" Secure="yes" Hidden="yes" />
+    <Property Id="DRYRUN" Value="true" Secure="yes" />
+    <Property Id="ALLOWINSECUREHTTP" Value="false" Secure="yes" />
+    <Property Id="LOCALPOLLSECONDS" Value="2" Secure="yes" />
+    <Property Id="ARPNOREPAIR" Value="1" />
+
+    <Launch Condition="VersionNT64" Message="Ruisi USB DLP Agent requires 64-bit Windows." />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Ruisi USB DLP" />
+    </StandardDirectory>
+    <StandardDirectory Id="CommonAppDataFolder">
+      <Directory Id="DataFolder" Name="UsbDlp" />
+    </StandardDirectory>
+
+    <Component Id="AgentServiceComponent" Directory="INSTALLFOLDER" Guid="{F690F364-9066-4D95-9134-1EA976879FB5}" Bitness="always64">
+      <File Id="AgentServiceExe" Source="$(var.AgentServiceExe)" KeyPath="yes" />
+      <ServiceInstall
+          Id="AgentServiceInstall"
+          Name="UsbDlp.Agent"
+          DisplayName="Ruisi USB DLP Agent"
+          Description="Enterprise USB device-control policy and enforcement agent"
+          Type="ownProcess"
+          Start="auto"
+          ErrorControl="normal"
+          Account="LocalSystem">
+        <util:ServiceConfig
+            FirstFailureActionType="restart"
+            SecondFailureActionType="restart"
+            ThirdFailureActionType="restart"
+            RestartServiceDelayInSeconds="5"
+            ResetPeriodInDays="1" />
+      </ServiceInstall>
+      <ServiceControl Id="AgentServiceControl" Name="UsbDlp.Agent" Start="install" Stop="both" Remove="uninstall" Wait="yes" />
+    </Component>
+
+    <Component Id="ServiceEnvironmentComponent" Directory="INSTALLFOLDER" Guid="{5A9D08B3-884A-498D-89F0-85C44AF6258F}" Bitness="always64">
+      <RegistryValue
+          Id="ServiceEnvironment"
+          Root="HKLM"
+          Key="SYSTEM\CurrentControlSet\Services\UsbDlp.Agent"
+          Name="Environment"
+          Type="multiString"
+          KeyPath="yes">
+        <MultiStringValue Value="UsbDlp__ServerBaseUrl=[SERVERURL]" />
+        <MultiStringValue Value="UsbDlp__EnrollmentTokenFile=[DataFolder]bootstrap-token.txt" />
+        <MultiStringValue Value="UsbDlp__DataDirectory=[DataFolder]" />
+        <MultiStringValue Value="UsbDlp__DryRun=[DRYRUN]" />
+        <MultiStringValue Value="UsbDlp__AllowInsecureHttp=[ALLOWINSECUREHTTP]" />
+        <MultiStringValue Value="UsbDlp__LocalPollSeconds=[LOCALPOLLSECONDS]" />
+        <MultiStringValue Value="UsbDlp__SimulatedDevicePath=" />
+        <MultiStringValue Value="UsbDlp__NotifierExecutablePath=[INSTALLFOLDER]UsbDlp.Notifier.exe" />
+      </RegistryValue>
+    </Component>
+
+    <Component Id="DataDirectoryComponent" Directory="DataFolder" Guid="{4CF4BFE7-F4F4-4B23-BC20-05422E158446}" Bitness="always64">
+      <CreateFolder>
+        <PermissionEx Sddl="D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)" />
+      </CreateFolder>
+      <RegistryValue
+          Id="DataDirectoryMarker"
+          Root="HKLM"
+          Key="SOFTWARE\Ruisi\UsbDlp"
+          Name="DataDirectory"
+          Type="string"
+          Value="[DataFolder]"
+          KeyPath="yes" />
+      <CopyFile
+          Id="CopyEnrollmentToken"
+          SourceProperty="ENROLLMENTTOKENFILE"
+          DestinationDirectory="DataFolder"
+          DestinationName="bootstrap-token.txt" />
+      <RemoveFile Id="RemoveBootstrapToken" Name="bootstrap-token.txt" On="uninstall" />
+    </Component>
+
+    <Component Id="CliExecutableComponent" Directory="INSTALLFOLDER" Guid="{3025C60C-DBF4-4B56-8EBC-4E15080E942A}" Bitness="always64">
+      <File Id="CliExe" Source="$(var.CliExe)" KeyPath="yes" />
+    </Component>
+
+    <CustomAction
+        Id="ClearOwnedRegistryPolicy"
+        FileRef="CliExe"
+        ExeCommand="registry-clear-owned --live"
+        Execute="deferred"
+        Impersonate="no"
+        Return="ignore" />
+    <InstallExecuteSequence>
+      <Custom
+          Action="ClearOwnedRegistryPolicy"
+          After="StopServices"
+          Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+    </InstallExecuteSequence>
+
+    <Feature Id="WorkstationAgent" Title="Ruisi USB DLP Agent" Level="1">
+      <ComponentRef Id="AgentServiceComponent" />
+      <ComponentRef Id="ServiceEnvironmentComponent" />
+      <ComponentRef Id="DataDirectoryComponent" />
+      <ComponentRef Id="CliExecutableComponent" />
+      <ComponentGroupRef Id="PublishedPayload" />
+    </Feature>
+  </Package>
+</Wix>

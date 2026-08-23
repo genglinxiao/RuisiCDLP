@@ -1,0 +1,13 @@
+**/bin/
+**/obj/
+.dotnet/
+.localappdata/
+TestResults/
+coverage/
+.run/
+artifacts/
+**/App_Data/*.db
+**/App_Data/*.db-shm
+**/App_Data/*.db-wal
+*.user
+*.suo

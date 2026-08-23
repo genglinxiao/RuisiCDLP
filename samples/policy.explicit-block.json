@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "policyVersion": 43,
+  "generatedAtUtc": "2026-08-18T12:00:00+00:00",
+  "workstationId": "00000000-0000-0000-0000-000000000101",
+  "groupId": "00000000-0000-0000-0000-000000000201",
+  "groupMode": "default_allow",
+  "entries": [
+    {
+      "id": "00000000-0000-0000-0000-000000000002",
+      "matchType": "vid_pid",
+      "vid": "0781",
+      "pid": "5583",
+      "serial": null,
+      "instanceId": null,
+      "deviceClass": null,
+      "displayName": "Blocked USB device model",
+      "action": "block",
+      "mandatory": false,
+      "scopeType": "global",
+      "scopeId": null,
+      "expiresAtUtc": null,
+      "note": "Gate A explicit-block sample",
+      "deviceInstallIds": []
+    }
+  ]
+}

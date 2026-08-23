@@ -1,0 +1,18 @@
+{
+  "instanceId": "USB\\VID_0781&PID_5583\\4C530001230904",
+  "hardwareIds": ["USB\\VID_0781&PID_5583"],
+  "deviceInstallIds": [
+    "USB\\VID_0781&PID_5583\\4C530001230904",
+    "USB\\VID_0781&PID_5583"
+  ],
+  "vid": "0781",
+  "pid": "5583",
+  "serial": "4C530001230904",
+  "deviceClass": "usb_storage",
+  "classGuid": "{4d36e967-e325-11ce-bfc1-08002be10318}",
+  "service": "USBSTOR",
+  "friendlyName": "Sample USB storage device",
+  "transport": "usb",
+  "capabilities": ["usb_storage"],
+  "ancestryClassGuids": []
+}

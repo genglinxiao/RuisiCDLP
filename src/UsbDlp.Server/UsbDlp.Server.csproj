@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.12" />
+    <ProjectReference Include="..\UsbDlp.Shared\UsbDlp.Shared.csproj" />
+    <EmbeddedResource Update="Resources\SharedResource.zh-CN.resx" LogicalName="UsbDlp.Server.Resources.SharedResource.resources" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+</Project>

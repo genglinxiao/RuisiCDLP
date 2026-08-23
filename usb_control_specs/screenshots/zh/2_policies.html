@@ -1,0 +1,38 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+  <style>
+    *{box-sizing:border-box;}
+    body{margin:0;background:#F1EFE8;font-family:'Noto Sans CJK SC','Helvetica Neue',Arial,sans-serif;color:#2C2C2A;}
+    .frame{width:1040px;margin:0;background:#FFFFFF;border:1px solid #D3D1C7;border-radius:14px;overflow:hidden;}
+    table{width:100%;border-collapse:collapse;font-size:12px;}
+    th{font-weight:400;color:#888780;text-align:left;padding:6px 8px;}
+    td{padding:7px 8px;border-top:1px solid #D3D1C7;vertical-align:middle;}
+    .metric{background:#F1EFE8;border-radius:8px;padding:11px 13px;}
+    .metric p{margin:0;} .ml{font-size:12px;color:#888780;} .mv{font-size:21px;font-weight:500;margin-top:3px;}
+    .btn{font-size:12px;padding:6px 13px;border-radius:8px;border:1px solid #B4B2A9;color:#5F5E5A;display:inline-flex;align-items:center;gap:6px;}
+    .btnp{background:#185FA5;color:#fff;border:none;}
+    .pill{font-size:12px;padding:4px 11px;border-radius:8px;border:1px solid #D3D1C7;color:#5F5E5A;}
+    .pill.on{background:#E6F1FB;color:#0C447C;border-color:#E6F1FB;}
+    .card2{background:#F1EFE8;border-radius:8px;padding:13px;}
+    h1{font-size:15px;font-weight:500;margin:0;}
+  </style></head><body>
+  <div class="frame">
+    <div style="display:flex;align-items:center;gap:11px;padding:12px 18px;border-bottom:1px solid #D3D1C7;">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#185FA5" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z"/></svg>
+      <span style="font-size:14px;font-weight:500;">USB 设备管控</span>
+      <span style="font-size:12px;color:#888780;">管理控制台</span>
+      <span style="margin-left:auto;font-size:12px;color:#5F5E5A;">策略 v42 · 2 小时前发布 · EN | 中文</span>
+    </div>
+    <div style="display:flex;">
+      <div style="width:190px;border-right:1px solid #D3D1C7;padding:10px;flex-shrink:0;">
+        <div style="display:flex;align-items:center;gap:10px;padding:8px 11px;border-radius:8px;font-size:13px;margin-bottom:2px;color:#5F5E5A;"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#5F5E5A" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h7v7H4zM13 4h7v4h-7zM13 10h7v10h-7zM4 13h7v7H4z"/></svg><span>概览</span></div><div style="display:flex;align-items:center;gap:10px;padding:8px 11px;border-radius:8px;font-size:13px;margin-bottom:2px;background:#E6F1FB;color:#0C447C;font-weight:500;"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#0C447C" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01"/></svg><span>策略</span></div><div style="display:flex;align-items:center;gap:10px;padding:8px 11px;border-radius:8px;font-size:13px;margin-bottom:2px;color:#5F5E5A;"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#5F5E5A" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h18v11H3zM8 20h8M12 16v4"/></svg><span>工作站</span></div><div style="display:flex;align-items:center;gap:10px;padding:8px 11px;border-radius:8px;font-size:13px;margin-bottom:2px;color:#5F5E5A;"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#5F5E5A" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h5l2 3h4l2-3h5M3 12l3-7h12l3 7v6H3z"/></svg><span>申请</span> <span style="margin-left:auto;background:#FAEEDA;color:#854F0B;font-size:11px;padding:1px 7px;border-radius:8px;">3</span></div><div style="display:flex;align-items:center;gap:10px;padding:8px 11px;border-radius:8px;font-size:13px;margin-bottom:2px;color:#5F5E5A;"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#5F5E5A" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8v4l3 2M3 12a9 9 0 1 0 3-6.7L3 8M3 4v4h4"/></svg><span>事件</span></div>
+      </div>
+      <div style="flex:1;padding:18px 20px;min-width:0;"><div style="display:flex;align-items:center;gap:9px;margin-bottom:14px;flex-wrap:wrap;">
+    <h1>设备策略</h1>
+    <span class="pill on">全部范围</span><span class="pill">全局</span><span class="pill">分组</span><span class="pill">工作站</span>
+    <span class="btn btnp" style="margin-left:auto;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg> 添加设备</span>
+  </div>
+  <table><tr><th style="width:22%">设备</th><th style="width:15%">匹配方式</th><th style="width:22%">值</th><th style="width:14%">范围</th><th style="width:13%">动作</th><th style="width:12%">到期</th></tr>
+  <tr><td>Kingston IronKey D500S</td><td style="color:#5F5E5A">vid+pid+序列号</td><td><span style="font-family:'Noto Sans Mono',monospace;font-size:11px;color:#5F5E5A;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block;">0951/1741/002618A2</span></td><td><span style="background:#E6F1FB;color:#0C447C;padding:2px 8px;border-radius:8px;font-size:11px;white-space:nowrap;">全局</span></td><td><span style="color:#3B6D11">允许</span></td><td>—</td></tr><tr><td>所有大容量存储</td><td style="color:#5F5E5A">设备类</td><td><span style="font-family:'Noto Sans Mono',monospace;font-size:11px;color:#5F5E5A;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block;">USBSTOR</span></td><td><span style="background:#FBEAF0;color:#993556;padding:2px 8px;border-radius:8px;font-size:11px;white-space:nowrap;">设计工程</span></td><td><span style="color:#A32D2D">拦截</span></td><td>—</td></tr><tr><td>Verbatim Store'n'Go</td><td style="color:#5F5E5A">vid+pid（任意序列号）</td><td><span style="font-family:'Noto Sans Mono',monospace;font-size:11px;color:#5F5E5A;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block;">18A5/0302/*</span></td><td><span style="background:#FBEAF0;color:#993556;padding:2px 8px;border-radius:8px;font-size:11px;white-space:nowrap;">车间</span></td><td><span style="color:#A32D2D">拦截</span></td><td>—</td></tr><tr><td>SanDisk Ultra（借用 #4）</td><td style="color:#5F5E5A">vid+pid+序列号</td><td><span style="font-family:'Noto Sans Mono',monospace;font-size:11px;color:#5F5E5A;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block;">0781/5583/4C5300…</span></td><td><span style="background:#FAEEDA;color:#854F0B;padding:2px 8px;border-radius:8px;font-size:11px;white-space:nowrap;">WS-ENG-042</span></td><td><span style="color:#3B6D11">允许</span></td><td><span style="color:#854F0B">9/1</span></td></tr></table>
+  <p style="margin-top:12px;font-size:11px;color:#888780;">优先级：实例 ID > vid+pid+序列号 > vid+pid > 设备类 · 同级中拦截优先于允许 · 无匹配时按分组模式</p></div>
+    </div>
+  </div></body></html>

@@ -1,0 +1,75 @@
+@page
+@using UsbDlp.Policy
+@using System.Globalization
+@inject UsbDlp.Server.SharedResource L
+@model UsbDlp.Server.Pages.IndexModel
+@{ ViewData["Title"] = L["admin console"]; string tab = Model.ActiveTab; string nextCulture = CultureInfo.CurrentUICulture.Name == "zh-CN" ? "en-US" : "zh-CN"; }
+<header class="topbar">
+  <a class="brand" href="/?tab=dashboard"><span class="shield" aria-hidden="true">◇</span><strong>@L["USB device control"]</strong><span>@L["admin console"]</span></a>
+  <div class="top-meta">policy v@Model.Data.PolicyVersion · @User.Identity?.Name · <a class="lang" href="/culture/@nextCulture?returnUrl=@Uri.EscapeDataString(HttpContext.Request.Path + HttpContext.Request.QueryString)">EN | 中文</a></div>
+</header>
+<div class="shell">
+  <aside class="sidebar" aria-label="Main navigation">
+    <a class="nav @(tab=="dashboard"?"active":"")" href="/?tab=dashboard"><span>▦</span><b>@L["Dashboard"]</b></a>
+    <a class="nav @(tab=="policies"?"active":"")" href="/?tab=policies"><span>☷</span><b>@L["Policies"]</b></a>
+    <a class="nav @(tab=="workstations"?"active":"")" href="/?tab=workstations"><span>▱</span><b>@L["Workstations"]</b></a>
+    <a class="nav @(tab=="requests"?"active":"")" href="/?tab=requests"><span>⌁</span><b>@L["Requests"]</b>@if(Model.Data.PendingRequests>0){<i>@Model.Data.PendingRequests</i>}</a>
+    <a class="nav @(tab=="events"?"active":"")" href="/?tab=events"><span>◴</span><b>@L["Events"]</b></a>
+    <a class="nav @(tab=="settings"?"active":"")" href="/?tab=settings"><span>⚙</span><b>@L["Settings"]</b></a>
+  </aside>
+  <main class="content" id="main-content">
+  @if(tab=="dashboard") {
+    <div class="metrics">
+      <section class="metric"><span>@L["Agents online"]</span><strong>@Model.Data.OnlineCount<small>/@Model.Data.WorkstationCount</small></strong></section>
+      <section class="metric danger"><span>@L["Blocked today"]</span><strong>@Model.Data.BlockedToday</strong></section>
+      <section class="metric pending"><span>@L["Pending requests"]</span><strong>@Model.Data.PendingRequests</strong></section>
+      <section class="metric"><span>@L["Current policy"]</span><strong>v@Model.Data.PolicyVersion</strong></section>
+    </div>
+    <div class="section-title"><div><h1>@L["Policy layers"]</h1><p>@L["Effective policy combines global, group, and workstation scope."]</p></div><a class="primary" href="/?tab=policies#add-policy">@L["Add device"]</a></div>
+    <partial name="_PolicyTable" model="Model.Data.Policies.Take(6).ToList()" />
+    <section class="activity-card"><h2>@L["Recent activity"]</h2>
+      @if(Model.Data.Events.Count==0){<p class="empty">@L["No activity has been reported yet. Start a workstation agent to see device events."]</p>}
+      @foreach(var item in Model.Data.Events.Take(5)){<div class="activity"><span class="dot @item.Type"></span><time>@item.OccurredAtUtc.ToLocalTime().ToString("HH:mm")</time><strong>@item.Type.Replace('_',' ')</strong><span>@(item.DeviceName ?? "Agent lifecycle") · @item.Hostname</span></div>}
+    </section>
+  } else if(tab=="policies") {
+    <div class="section-title"><div><h1>@L["Policies"]</h1><p>@L["Allow or block USB storage and portable devices by identity and scope."]</p></div></div>
+    <section class="form-card" id="add-policy"><h2>@L["Add policy entry"]</h2>
+      <form id="policy-form" class="form-grid">
+        <label>@L["Display name"]<input name="displayName" maxlength="200" required /></label>
+        <label>@L["Match type"]<select name="matchType"><option value="vid_pid">VID + PID</option><option value="vid_pid_serial">VID + PID + @L["Serial"]</option><option value="instance_id">@L["Instance ID"]</option><option value="device_class">@L["Device class"]</option></select></label>
+        <label>VID<input name="vid" maxlength="4" placeholder="0781" /></label><label>PID<input name="pid" maxlength="4" placeholder="5583" /></label>
+        <label>@L["Serial"]<input name="serial" maxlength="128" /></label><label>@L["Instance ID"]<input name="instanceId" maxlength="200" /></label>
+        <label>@L["Device class"]<select name="deviceClass"><option value="">Not used</option><option value="usb_storage">USB storage</option><option value="wpd">WPD / MTP</option></select></label>
+        <label>@L["Action"]<select name="action"><option value="block">@L["Block"]</option><option value="allow">@L["Allow"]</option></select></label>
+        <label>@L["Scope"]<select name="scopeType"><option value="global">@L["Global"]</option><option value="group">@L["Group"]</option><option value="workstation">@L["Workstation"]</option></select></label>
+        <label>@L["Scope ID"]<input name="scopeId" placeholder="Required for group/workstation" /></label>
+        <label>@L["Expires at UTC"]<input name="expiresAtUtc" type="datetime-local" /></label><label class="check"><input name="mandatory" type="checkbox" /> @L["Mandatory global block"]</label>
+        <div class="form-actions"><button class="primary" type="submit">@L["Publish policy"]</button><span class="form-status" role="status"></span></div>
+      </form>
+    </section>
+    <partial name="_PolicyTable" model="Model.Data.Policies" />
+  } else if(tab=="workstations") {
+    <div class="section-title"><div><h1>@L["Workstations"]</h1><p>@L["Enrollment, health, group assignment, and applied policy status."]</p></div></div>
+    <div class="table-wrap"><table><thead><tr><th>@L["Workstation"]</th><th>@L["Group"]</th><th>@L["Agent"]</th><th>@L["Last seen"]</th><th>@L["Applied policy"]</th><th>@L["Health"]</th></tr></thead><tbody>
+    @if(Model.Data.Workstations.Count==0){<tr><td colspan="6" class="empty">No workstations enrolled. Configure an enrollment token and start the agent.</td></tr>}
+    @foreach(var ws in Model.Data.Workstations){<tr><td><strong>@ws.Hostname</strong><small>@ws.MachineSid</small></td><td>@ws.GroupName</td><td>@ws.AgentVersion</td><td>@(ws.LastSeenUtc?.ToLocalTime().ToString("g") ?? "Never")</td><td>v@ws.AppliedPolicyVersion</td><td><span class="badge @ws.Health">@ws.Health.Replace('_',' ')</span></td></tr>}
+    </tbody></table></div>
+  } else if(tab=="requests") {
+    <div class="section-title"><div><h1>@L["Access requests"]</h1><p>@L["Review time-bounded workstation access requests."]</p></div></div>
+    <div class="cards">@if(Model.Data.Requests.Count==0){<p class="empty card">@L["No access requests."]</p>}
+    @foreach(var req in Model.Data.Requests){<article class="request-card"><div><span class="badge @req.Status">@req.Status</span><time>@req.CreatedAtUtc.ToLocalTime().ToString("g")</time></div><h2>@req.DeviceName</h2><code>@req.InstanceId</code><p><strong>@req.Username</strong> on @req.Hostname requested @req.RequestedDurationDays days</p><blockquote>@req.Justification</blockquote>@if(req.Status=="pending"){<div class="request-actions"><button class="primary request-decision" data-id="@req.Id" data-action="approve">@L["Approve"]</button><button class="secondary request-decision" data-id="@req.Id" data-action="deny">@L["Deny"]</button></div>}else if(req.Status=="approved"){<div class="request-actions"><button class="danger-button request-revoke" data-id="@req.Id" data-confirm="@L["Revoke confirmation"]">@L["Revoke access"]</button></div>}</article>}
+    </div>
+  } else if(tab=="events") {
+    <div class="section-title"><div><h1>@L["Events"]</h1><p>@L["Attributable device and agent activity."]</p></div><button class="secondary" id="export-events">@L["Export CSV"]</button></div>
+    <div class="table-wrap"><table id="events-table"><thead><tr><th>@L["Time"]</th><th>@L["Type"]</th><th>@L["Workstation"]</th><th>@L["User"]</th><th>@L["Device"]</th><th>@L["Decision"]</th><th>@L["Reason"]</th></tr></thead><tbody>
+    @if(Model.Data.Events.Count==0){<tr><td colspan="7" class="empty">@L["No events reported."]</td></tr>}
+    @foreach(var ev in Model.Data.Events){<tr><td>@ev.OccurredAtUtc.ToLocalTime().ToString("g")</td><td><span class="badge @ev.Type">@ev.Type.Replace('_',' ')</span></td><td>@ev.Hostname</td><td>@(ev.Username??"—")</td><td><strong>@(ev.DeviceName??"—")</strong><small>@ev.InstanceId</small></td><td>@(ev.Decision??"—")</td><td>@(ev.ReasonCode??"—")</td></tr>}
+    </tbody></table></div>
+  } else {
+    <div class="section-title"><div><h1>@L["Settings"]</h1><p>@L["Server health, enrollment, groups, administrators, and audit history."]</p></div></div>
+    <div class="metrics"><section class="metric"><span>@L["Database"]</span><strong class="healthy-text">@L["Healthy"]</strong></section><section class="metric"><span>@L["Policy version"]</span><strong>v@Model.Data.PolicyVersion</strong></section><section class="metric"><span>@L["Default group"]</span><strong>@L["Default deny"]</strong></section></div>
+    <section class="form-card"><h2>@L["Enrollment configuration"]</h2><p>Set <code>UsbDlp__BootstrapEnrollmentToken</code> on the server and use the same secret once in the workstation configuration. Rotate it after deployment.</p></section>
+    <h2>@L["Audit log"]</h2><div class="table-wrap"><table><thead><tr><th>@L["Time"]</th><th>@L["Actor"]</th><th>@L["Action"]</th><th>@L["Target"]</th></tr></thead><tbody>@foreach(var audit in Model.Data.Audit){<tr><td>@audit.OccurredAtUtc.ToLocalTime().ToString("g")</td><td>@audit.Actor</td><td>@audit.Action.Replace('_',' ')</td><td>@audit.TargetType · @audit.TargetId</td></tr>}</tbody></table></div>
+  }
+  </main>
+</div>

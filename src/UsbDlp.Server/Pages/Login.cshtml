@@ -1,0 +1,10 @@
+@page
+@using System.Globalization
+@inject UsbDlp.Server.SharedResource L
+@model UsbDlp.Server.Pages.LoginModel
+@{ Layout = null; string nextCulture = CultureInfo.CurrentUICulture.Name == "zh-CN" ? "en-US" : "zh-CN"; }
+<!doctype html><html lang="@CultureInfo.CurrentUICulture.Name"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width"/><title>@L["USB device control"]</title><link rel="stylesheet" href="~/css/site.css"/></head>
+<body class="login-body"><main class="login-card"><a class="login-language" href="/culture/@nextCulture?returnUrl=/Login">EN | 中文</a><div class="brand-mark">USB</div><h1>@L["USB device control"]</h1><p>@L["Administrator console"]</p>
+<form method="post"><label asp-for="Username">@L["Username"]</label><input asp-for="Username" autocomplete="username" required/>
+<label asp-for="Password">@L["Password"]</label><input asp-for="Password" type="password" autocomplete="current-password" required/>
+@if(Model.Error is not null){<div class="error" role="alert">@L[Model.Error]</div>}<button type="submit">@L["Sign in"]</button></form></main></body></html>
