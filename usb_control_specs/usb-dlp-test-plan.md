@@ -48,6 +48,14 @@ gate checklist fully passed and signed (name + date below each gate).
 | T-M6-10 | Enroll | nonce is idempotent; token use/expiry/rate limits enforced | integration |
 | T-M6-11 | Requests | duplicate/pending request constraints are idempotent | integration |
 | T-M6-12 | Publish | mutation+audit+snapshot are atomic; rollback creates newer version | integration |
+| T-M6-13 | Inventory ingest | accepted event/request upserts one device and workstation pair transactionally | integration |
+| T-M6-14 | Strong identity | same normalized VID/PID/serial on two workstations resolves to one device and two pairs | integration |
+| T-M6-15 | Local identity | no-serial instances on different workstations remain separate devices | integration |
+| T-M6-16 | Inventory search | IDs, instance, hostname, SID, name, manufacturer, model and description search normalized columns, not JSON | integration |
+| T-M6-17 | Pair status | detail computes effective decision, source, expiry, observed enforcement and freshness | integration |
+| T-M6-18 | Migration | existing request/event JSON backfills inventory idempotently without changing audit rows | integration |
+| T-M6-19 | Direct grant | admin pair grant creates the correct workstation-scoped entry and publishes/audits | integration |
+| T-M6-20 | Direct revoke | revokes only the selected pair grant, republishes and preserves request history | integration |
 | T-M7-01 | Admin UI | unauth request redirects to login | integration |
 | T-M7-02 | Admin UI | viewer role blocked from mutations | integration |
 | T-M7-03 | Admin UI | approve request → scoped Allow entry + status set | unit/integration |
@@ -58,6 +66,11 @@ gate checklist fully passed and signed (name + date below each gate).
 | T-M7-08 | CSV | RFC 4180, UTF-8 BOM and formula-injection protection | unit |
 | T-M7-09 | UI states | required pages/dialogs expose empty/error/conflict states | browser |
 | T-M7-10 | Accessibility | keyboard, focus, contrast and 200% zoom checks pass | browser |
+| T-M7-11 | Device UI | searchable/paged device inventory and identity confidence render safely | integration/browser |
+| T-M7-12 | Workstation UI | searchable/paged workstations and observed devices render safely | integration/browser |
+| T-M7-13 | Pair UI | device/workstation details show effective and observed state with freshness | integration/browser |
+| T-M7-14 | Inventory auth | viewer can inspect but direct pair grant/revoke is unavailable and forbidden | integration |
+| T-M7-15 | Search safety | invalid paging/sort is rejected and no-results/untrusted text is escaped | integration/browser |
 | T-M2-01 | Parser | VID/PID/serial parsed from standard instance id | unit |
 | T-M2-02 | Parser | &-substituted token → serial=null | unit |
 | T-M2-03 | Parser | WPD/MTP + lowercase hex ids parse without throwing | unit |
@@ -67,6 +80,7 @@ gate checklist fully passed and signed (name + date below each gate).
 | T-M2-07 | Monitor | registration precedes enumeration; resume triggers enumeration | unit |
 | T-M2-08 | Monitor | USBSTOR disk wins over WPD children regardless of enumeration order | unit |
 | T-M2-09 | Monitor | multi-volume media produces one canonical device with exact USBSTOR target | Windows integration |
+| T-M2-10 | Metadata | Windows snapshot captures manufacturer, model and description with null-safe fallback | unit/Windows integration |
 | T-M3-01 | Enforcer | registry value-set built correctly from a policy | unit |
 | T-M3-02 | Enforcer | ClearRegistryPolicy removes only our tagged values | unit |
 | T-M3-03 | Enforcer | dry-run makes no real CM_*/registry calls | unit |
@@ -122,7 +136,7 @@ between destructive runs.
 Signed: __________ Date: ______
 
 ### GATE B — server + admin UI (SRV-TEST, browser)
-- [ ] B1 Log in as admin; all six tabs load in the light theme, matching the mockups.
+- [ ] B1 Log in as admin; all seven navigation destinations load in the light theme, matching the mockups and visual system.
 - [ ] B2 Switch language EN↔中文 — every visible label changes; no leftover English/Chinese,
       no missing-key placeholders.
 - [ ] B3 Create a group (default-deny), add a global allow entry + a group block entry.
@@ -130,12 +144,18 @@ Signed: __________ Date: ______
 - [ ] B5 Events tab filters by type/date; CSV export opens with correct columns.
 - [ ] B6 Log in as a viewer → no add/edit/approve controls; direct mutation URL is refused.
 - [ ] B7 Every action in B3–B4 shows up in the audit log.
+- [ ] B8 Search Devices by UUID, instance ID, VID/PID, serial, name, manufacturer, model and description; verify expected results, pagination and no-results state.
+- [ ] B9 Search Workstations by UUID, hostname, machine SID and description; open one and verify all observed USB devices are listed.
+- [ ] B10 Open one device observed on multiple workstations; each pair shows effective decision/source/expiry, observed state and freshness without claiming an offline agent is current.
+- [ ] B11 Create and revoke a direct pair grant from detail pages; only that workstation/device pair changes, policy version increments each time, and audit records are present.
+- [ ] B12 Log in as viewer; inventory remains searchable but pair grant/revoke controls are absent and direct mutation returns 403.
 
 Signed: __________ Date: ______
 
 ### GATE C — agent device layer (VM-CLEAN, snapshot first)
 - [ ] C1 `UsbDlp.Cli monitor` prints correct VID/PID/serial/class when you plug in a USB
-      stick; serial=null case handled for a stick that reports none.
+      stick plus manufacturer/model/description when Windows provides them; serial=null and missing
+      metadata cases are handled without invented values.
 - [ ] C2 Same for a phone in MTP mode (WPD class detected).
 - [ ] C3 **DryRun=true** + default-deny policy: logs say it *would* disable the stick; Device
       Manager shows the stick still functional (nothing actually disabled).
@@ -222,3 +242,4 @@ both the automated evidence and every named manual gate; a narrower test does no
 | AC-8 deterministic evaluator | T-M1-01 through T-M1-13 plus 95% branch gate | A1-A3 |
 | AC-9 internal/safety device protection | T-M2-05, T-M3-03, T-M3-04 | C3-C5, C7 |
 | AC-10 API/application security | T-M4-01, T-M4-07, T-M4-09, T-M6-01 through T-M6-12, T-M7-01 through T-M7-08, T-M8-05 | B6-B7, D9, release checklist |
+| AC-11 searchable pair inventory | T-M2-10, T-M6-13 through T-M6-20, T-M7-11 through T-M7-15 | B8-B12 |

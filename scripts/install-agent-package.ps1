@@ -15,7 +15,7 @@ param(
 $ErrorActionPreference = "Stop"
 $root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 if (-not $PackagePath) {
-    $PackagePath = Join-Path $root "artifacts\installer\RuisiUsbDlpAgent-1.0.0-x64.msi"
+    $PackagePath = Join-Path $root "artifacts\installer\RuisiUsbDlpAgent-1.1.0-x64.msi"
 }
 $PackagePath = [IO.Path]::GetFullPath($PackagePath)
 $EnrollmentTokenFile = [IO.Path]::GetFullPath($EnrollmentTokenFile)

@@ -6,4 +6,33 @@
   <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms</value></resheader>
   <data name="Revoke access" xml:space="preserve"><value>Revoke access</value></data>
   <data name="Revoke confirmation" xml:space="preserve"><value>Revoke this device approval? The workstation will block the device after its next policy poll.</value></data>
+  <data name="Devices" xml:space="preserve"><value>Devices</value></data>
+  <data name="Search observed USB devices and inspect access on every workstation." xml:space="preserve"><value>Search observed USB devices and inspect access on every workstation.</value></data>
+  <data name="Search devices" xml:space="preserve"><value>Search devices</value></data>
+  <data name="ID, instance, VID/PID, serial, name, manufacturer, model or description" xml:space="preserve"><value>ID, instance, VID/PID, serial, name, manufacturer, model or description</value></data>
+  <data name="Search" xml:space="preserve"><value>Search</value></data>
+  <data name="Close detail" xml:space="preserve"><value>Close detail</value></data>
+  <data name="Manufacturer" xml:space="preserve"><value>Manufacturer</value></data>
+  <data name="Model" xml:space="preserve"><value>Model</value></data>
+  <data name="Description" xml:space="preserve"><value>Description</value></data>
+  <data name="Workstation access" xml:space="preserve"><value>Workstation access</value></data>
+  <data name="No devices match this search." xml:space="preserve"><value>No devices match this search.</value></data>
+  <data name="Search workstations" xml:space="preserve"><value>Search workstations</value></data>
+  <data name="ID, hostname, machine SID or description" xml:space="preserve"><value>ID, hostname, machine SID or description</value></data>
+  <data name="Machine SID" xml:space="preserve"><value>Machine SID</value></data>
+  <data name="Observed USB devices" xml:space="preserve"><value>Observed USB devices</value></data>
+  <data name="No workstations match this search." xml:space="preserve"><value>No workstations match this search.</value></data>
+  <data name="Policy source" xml:space="preserve"><value>Policy source</value></data>
+  <data name="Observed enforcement" xml:space="preserve"><value>Observed enforcement</value></data>
+  <data name="Expires" xml:space="preserve"><value>Expires</value></data>
+  <data name="No expiry" xml:space="preserve"><value>No expiry</value></data>
+  <data name="Last observed" xml:space="preserve"><value>Last observed</value></data>
+  <data name="Never" xml:space="preserve"><value>Never</value></data>
+  <data name="Request state" xml:space="preserve"><value>Request state</value></data>
+  <data name="None" xml:space="preserve"><value>None</value></data>
+  <data name="Revoke direct grant" xml:space="preserve"><value>Revoke direct grant</value></data>
+  <data name="Grant expiry" xml:space="preserve"><value>Grant expiry</value></data>
+  <data name="Grant access" xml:space="preserve"><value>Grant access</value></data>
+  <data name="Recent requests" xml:space="preserve"><value>Recent requests</value></data>
+  <data name="Save description" xml:space="preserve"><value>Save description</value></data>
 </root>

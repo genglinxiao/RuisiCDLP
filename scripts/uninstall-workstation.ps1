@@ -4,7 +4,7 @@ param([switch] $PurgeData)
 #Requires -RunAsAdministrator
 $ErrorActionPreference = "Stop"
 $root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
-$package = Join-Path $root "artifacts\installer\RuisiUsbDlpAgent-1.0.0-x64.msi"
+$package = Join-Path $root "artifacts\installer\RuisiUsbDlpAgent-1.1.0-x64.msi"
 if (Test-Path -LiteralPath $package -PathType Leaf) {
     $target = '"' + $package + '"'
 }

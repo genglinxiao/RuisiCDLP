@@ -1,0 +1,10 @@
+@model dynamic
+@if(Model.TotalCount > Model.PageSize){
+  var pages = (int)Math.Ceiling((double)Model.TotalCount / Model.PageSize);
+  var tab = Context.Request.Query["tab"].ToString();
+  <nav class="pagination" aria-label="Pagination">
+    @if(Model.Page>1){<a class="secondary" href="/?tab=@tab&q=@Uri.EscapeDataString((string)Model.Query)&page=@(Model.Page-1)">Previous</a>}
+    <span>Page @Model.Page of @pages · @Model.TotalCount results</span>
+    @if(Model.Page<pages){<a class="secondary" href="/?tab=@tab&q=@Uri.EscapeDataString((string)Model.Query)&page=@(Model.Page+1)">Next</a>}
+  </nav>
+}

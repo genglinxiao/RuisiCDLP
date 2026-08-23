@@ -13,7 +13,10 @@ public sealed record DeviceInfo(
     string FriendlyName,
     string Transport,
     IReadOnlyList<string> Capabilities,
-    IReadOnlyList<string> AncestryClassGuids);
+    IReadOnlyList<string> AncestryClassGuids,
+    string? Manufacturer = null,
+    string? Model = null,
+    string? Description = null);
 
 public sealed record DeviceEntry(
     Guid Id,
@@ -49,4 +52,3 @@ public sealed record PolicyEvaluation(
     DateTimeOffset EvaluatedAtUtc);
 
 public sealed record PolicyValidationError(string Code, string Message, Guid? EntryId = null);
-

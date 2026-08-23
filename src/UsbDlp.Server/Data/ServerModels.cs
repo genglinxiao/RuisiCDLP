@@ -29,7 +29,64 @@ public sealed record WorkstationRow(
     string AgentVersion,
     DateTimeOffset? LastSeenUtc,
     long AppliedPolicyVersion,
-    string Health);
+    string Health,
+    string? Description = null);
+
+public sealed record PagedResult<T>(IReadOnlyList<T> Items, int Page, int PageSize, int TotalCount, string Query);
+
+public sealed record DeviceInventoryRow(
+    Guid Id,
+    string IdentityConfidence,
+    string Vid,
+    string Pid,
+    string? Serial,
+    string FriendlyName,
+    string? Manufacturer,
+    string? Model,
+    string? Description,
+    DateTimeOffset FirstSeenUtc,
+    DateTimeOffset LastSeenUtc,
+    int WorkstationCount);
+
+public sealed record WorkstationInventoryRow(
+    Guid Id,
+    string Hostname,
+    string MachineSid,
+    string GroupName,
+    string? Description,
+    string AgentVersion,
+    DateTimeOffset? LastSeenUtc,
+    string Health,
+    int DeviceCount);
+
+public sealed record WorkstationDeviceRow(
+    Guid WorkstationId,
+    Guid DeviceId,
+    string Hostname,
+    string DeviceName,
+    string InstanceId,
+    string EffectiveDecision,
+    string PolicySource,
+    bool CanRevoke,
+    Guid? MatchedEntryId,
+    string ReasonCode,
+    DateTimeOffset? ExpiresAtUtc,
+    long PolicyVersion,
+    string? RequestQualification,
+    string ObservedEnforcement,
+    DateTimeOffset? LastObservedAtUtc,
+    string Freshness,
+    string? LastEventType,
+    IReadOnlyList<RequestRow> RecentRequests);
+
+public sealed record DeviceDetail(DeviceInventoryRow Device, IReadOnlyList<WorkstationDeviceRow> Workstations);
+public sealed record WorkstationDetail(WorkstationInventoryRow Workstation, IReadOnlyList<WorkstationDeviceRow> Devices);
+public sealed record InventorySearchResult(
+    IReadOnlyList<DeviceInventoryRow> Devices,
+    IReadOnlyList<WorkstationInventoryRow> Workstations,
+    int Page,
+    int PageSize,
+    string Query);
 
 public sealed record PolicyRow(
     Guid Id,
@@ -88,3 +145,6 @@ public sealed record AddPolicyRequest(
     DateTimeOffset? ExpiresAtUtc);
 
 public sealed record DecisionRequest(int DurationDays, string? Reason);
+public sealed record GrantRequest(DateTimeOffset? ExpiresAtUtc, string Reason);
+public sealed record GrantResponse(Guid EntryId, long PolicyVersion, WorkstationDeviceRow Pair);
+public sealed record DescriptionRequest(string? Description);

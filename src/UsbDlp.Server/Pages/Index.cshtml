@@ -11,6 +11,7 @@
 <div class="shell">
   <aside class="sidebar" aria-label="Main navigation">
     <a class="nav @(tab=="dashboard"?"active":"")" href="/?tab=dashboard"><span>▦</span><b>@L["Dashboard"]</b></a>
+    <a class="nav @(tab=="devices"?"active":"")" href="/?tab=devices"><span>◈</span><b>@L["Devices"]</b></a>
     <a class="nav @(tab=="policies"?"active":"")" href="/?tab=policies"><span>☷</span><b>@L["Policies"]</b></a>
     <a class="nav @(tab=="workstations"?"active":"")" href="/?tab=workstations"><span>▱</span><b>@L["Workstations"]</b></a>
     <a class="nav @(tab=="requests"?"active":"")" href="/?tab=requests"><span>⌁</span><b>@L["Requests"]</b>@if(Model.Data.PendingRequests>0){<i>@Model.Data.PendingRequests</i>}</a>
@@ -31,6 +32,14 @@
       @if(Model.Data.Events.Count==0){<p class="empty">@L["No activity has been reported yet. Start a workstation agent to see device events."]</p>}
       @foreach(var item in Model.Data.Events.Take(5)){<div class="activity"><span class="dot @item.Type"></span><time>@item.OccurredAtUtc.ToLocalTime().ToString("HH:mm")</time><strong>@item.Type.Replace('_',' ')</strong><span>@(item.DeviceName ?? "Agent lifecycle") · @item.Hostname</span></div>}
     </section>
+  } else if(tab=="devices") {
+    <div class="section-title"><div><h1>@L["Devices"]</h1><p>@L["Search observed USB devices and inspect access on every workstation."]</p></div></div>
+    <form class="inventory-search" method="get"><input type="hidden" name="tab" value="devices" /><label class="sr-only" for="device-search">@L["Search devices"]</label><input id="device-search" name="q" value="@Model.Query" maxlength="200" placeholder="@L["ID, instance, VID/PID, serial, name, manufacturer, model or description"]" /><button class="primary" type="submit">@L["Search"]</button></form>
+    @if(Model.DeviceDetail is { } dd){<section class="detail-card"><div class="section-title"><div><span class="badge @dd.Device.IdentityConfidence">@dd.Device.IdentityConfidence</span><h2>@dd.Device.FriendlyName</h2><code>@dd.Device.Id</code></div><a class="secondary" href="/?tab=devices&q=@Uri.EscapeDataString(Model.Query)">@L["Close detail"]</a></div><div class="detail-grid"><span><b>VID:PID</b>@dd.Device.Vid:@dd.Device.Pid</span><span><b>@L["Serial"]</b>@(dd.Device.Serial??"—")</span><span><b>@L["Manufacturer"]</b>@(dd.Device.Manufacturer??"—")</span><span><b>@L["Model"]</b>@(dd.Device.Model??"—")</span><span><b>@L["Description"]</b>@(dd.Device.Description??"—")</span><span><b>@L["Last seen"]</b>@dd.Device.LastSeenUtc.ToLocalTime().ToString("g")</span></div><form class="description-form" data-kind="devices" data-id="@dd.Device.Id"><label>@L["Description"]<input name="description" maxlength="500" value="@dd.Device.Description" /></label><button class="secondary" type="submit">@L["Save description"]</button><span class="form-status" role="status"></span></form><h3>@L["Workstation access"]</h3>@foreach(var pair in dd.Workstations){<partial name="_PairCard" model="pair" />}</section>}
+    <div class="table-wrap"><table><thead><tr><th>@L["Device"]</th><th>@L["Manufacturer"]</th><th>@L["Model"]</th><th>VID:PID / @L["Serial"]</th><th>@L["Workstations"]</th><th>@L["Last seen"]</th></tr></thead><tbody>
+    @if(Model.Devices!.Items.Count==0){<tr><td colspan="6" class="empty">@L["No devices match this search."]</td></tr>}
+    @foreach(var device in Model.Devices.Items){<tr><td><a class="row-link" href="/?tab=devices&deviceId=@device.Id&q=@Uri.EscapeDataString(Model.Query)"><strong>@device.FriendlyName</strong><small>@device.Id · @device.IdentityConfidence</small></a></td><td>@(device.Manufacturer??"—")</td><td>@(device.Model??"—")</td><td>@device.Vid:@device.Pid<small>@(device.Serial??"No serial")</small></td><td>@device.WorkstationCount</td><td>@device.LastSeenUtc.ToLocalTime().ToString("g")</td></tr>}
+    </tbody></table></div><partial name="_Pagination" model="Model.Devices" />
   } else if(tab=="policies") {
     <div class="section-title"><div><h1>@L["Policies"]</h1><p>@L["Allow or block USB storage and portable devices by identity and scope."]</p></div></div>
     <section class="form-card" id="add-policy"><h2>@L["Add policy entry"]</h2>
@@ -50,10 +59,13 @@
     <partial name="_PolicyTable" model="Model.Data.Policies" />
   } else if(tab=="workstations") {
     <div class="section-title"><div><h1>@L["Workstations"]</h1><p>@L["Enrollment, health, group assignment, and applied policy status."]</p></div></div>
-    <div class="table-wrap"><table><thead><tr><th>@L["Workstation"]</th><th>@L["Group"]</th><th>@L["Agent"]</th><th>@L["Last seen"]</th><th>@L["Applied policy"]</th><th>@L["Health"]</th></tr></thead><tbody>
-    @if(Model.Data.Workstations.Count==0){<tr><td colspan="6" class="empty">No workstations enrolled. Configure an enrollment token and start the agent.</td></tr>}
-    @foreach(var ws in Model.Data.Workstations){<tr><td><strong>@ws.Hostname</strong><small>@ws.MachineSid</small></td><td>@ws.GroupName</td><td>@ws.AgentVersion</td><td>@(ws.LastSeenUtc?.ToLocalTime().ToString("g") ?? "Never")</td><td>v@ws.AppliedPolicyVersion</td><td><span class="badge @ws.Health">@ws.Health.Replace('_',' ')</span></td></tr>}
+    <form class="inventory-search" method="get"><input type="hidden" name="tab" value="workstations" /><label class="sr-only" for="workstation-search">@L["Search workstations"]</label><input id="workstation-search" name="q" value="@Model.Query" maxlength="200" placeholder="@L["ID, hostname, machine SID or description"]" /><button class="primary" type="submit">@L["Search"]</button></form>
+    @if(Model.WorkstationDetail is { } wd){<section class="detail-card"><div class="section-title"><div><h2>@wd.Workstation.Hostname</h2><code>@wd.Workstation.Id</code></div><a class="secondary" href="/?tab=workstations&q=@Uri.EscapeDataString(Model.Query)">@L["Close detail"]</a></div><div class="detail-grid"><span><b>@L["Machine SID"]</b>@wd.Workstation.MachineSid</span><span><b>@L["Group"]</b>@wd.Workstation.GroupName</span><span><b>@L["Agent"]</b>@wd.Workstation.AgentVersion</span><span><b>@L["Health"]</b>@wd.Workstation.Health</span><span><b>@L["Description"]</b>@(wd.Workstation.Description??"—")</span><span><b>@L["Last seen"]</b>@(wd.Workstation.LastSeenUtc?.ToLocalTime().ToString("g")??"Never")</span></div><form class="description-form" data-kind="workstations" data-id="@wd.Workstation.Id"><label>@L["Description"]<input name="description" maxlength="500" value="@wd.Workstation.Description" /></label><button class="secondary" type="submit">@L["Save description"]</button><span class="form-status" role="status"></span></form><h3>@L["Observed USB devices"]</h3>@foreach(var pair in wd.Devices){<partial name="_PairCard" model="pair" />}</section>}
+    <div class="table-wrap"><table><thead><tr><th>@L["Workstation"]</th><th>@L["Group"]</th><th>@L["Agent"]</th><th>@L["Last seen"]</th><th>@L["Devices"]</th><th>@L["Health"]</th></tr></thead><tbody>
+    @if(Model.Workstations!.Items.Count==0){<tr><td colspan="6" class="empty">@L["No workstations match this search."]</td></tr>}
+    @foreach(var ws in Model.Workstations.Items){<tr><td><a class="row-link" href="/?tab=workstations&workstationId=@ws.Id&q=@Uri.EscapeDataString(Model.Query)"><strong>@ws.Hostname</strong><small>@ws.MachineSid</small></a></td><td>@ws.GroupName</td><td>@ws.AgentVersion</td><td>@(ws.LastSeenUtc?.ToLocalTime().ToString("g") ?? "Never")</td><td>@ws.DeviceCount</td><td><span class="badge @ws.Health">@ws.Health.Replace('_',' ')</span></td></tr>}
     </tbody></table></div>
+    <partial name="_Pagination" model="Model.Workstations" />
   } else if(tab=="requests") {
     <div class="section-title"><div><h1>@L["Access requests"]</h1><p>@L["Review time-bounded workstation access requests."]</p></div></div>
     <div class="cards">@if(Model.Data.Requests.Count==0){<p class="empty card">@L["No access requests."]</p>}

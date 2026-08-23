@@ -44,6 +44,12 @@ For a production-like deployment, terminate TLS at ASP.NET Core or a trusted rev
 the `UsbDlp__*` settings in the service environment, protect the SQLite path, and rotate the
 bootstrap enrollment token after rollout. HTTP is provided only for the loopback demo.
 
+The administration console treats **Devices** and **Workstations** as searchable inventory.
+Device detail shows every workstation where the device was observed; workstation detail shows
+every observed USB device. Each pair reports current effective policy separately from the latest
+observed enforcement and freshness. Administrators can add or revoke a direct pair grant without
+searching historical requests. Existing request/event JSON is backfilled into inventory at startup.
+
 ## Build the workstation MSI
 
 The x64 WiX 4 package is self-contained and includes the agent service, on-demand notifier,
@@ -53,7 +59,7 @@ diagnostic CLI, .NET 8 runtime, and native SQLite runtime:
 powershell -ExecutionPolicy Bypass -File scripts\build-agent-installer.ps1
 ```
 
-Output: `artifacts\installer\RuisiUsbDlpAgent-1.0.0-x64.msi`. The build prints its SHA-256 hash.
+Output: `artifacts\installer\RuisiUsbDlpAgent-1.1.0-x64.msi`. The build prints its SHA-256 hash.
 The development artifact is not Authenticode-signed; sign both binaries and MSI with the
 organization's code-signing certificate before managed production deployment.
 
@@ -87,7 +93,7 @@ For direct enterprise deployment, use equivalent MSI properties without placing 
 on the command line:
 
 ```powershell
-msiexec /i RuisiUsbDlpAgent-1.0.0-x64.msi /qn /norestart `
+msiexec /i RuisiUsbDlpAgent-1.1.0-x64.msi /qn /norestart `
   SERVERURL="https://usb-control.example.com" `
   ENROLLMENTTOKENFILE="C:\SecureStaging\usb-enrollment-token.txt" `
   DRYRUN=true ALLOWINSECUREHTTP=false LOCALPOLLSECONDS=2

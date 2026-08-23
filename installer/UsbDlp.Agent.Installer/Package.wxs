@@ -4,7 +4,7 @@
   <Package
       Name="Ruisi USB DLP Agent"
       Manufacturer="Ruisi"
-      Version="1.0.0"
+      Version="1.1.0"
       UpgradeCode="{F721F95B-0DB3-4F02-A465-86D4CE0BC854}"
       Scope="perMachine"
       InstallerVersion="500"

@@ -1,6 +1,6 @@
 # USB Device Control - Agent API Contract
 
-Version 1.0. This document is normative and supplements `usb-dlp-spec.md` sections 5,
+Version 1.1. This document is normative and supplements `usb-dlp-spec.md` sections 5,
 8, 9, 10, and 13.
 
 ## 1. Common conventions
@@ -46,14 +46,18 @@ large, 415 media type, 422 supported JSON with unsupported schema semantics, 429
   "classGuid": "{eec5ad98-8080-425f-922a-dabf3de3f69a}",
   "service": "WpdFs",
   "friendlyName": "SanDisk Ultra USB 3.0",
+  "manufacturer": "SanDisk",
+  "model": "Ultra USB 3.0",
+  "description": "USB Mass Storage Device",
   "transport": "usb",
   "capabilities": ["mtp"]
 }
 ```
 
 `instanceId` is required (1-200). `hardwareIds` contains 0-32 and `deviceInstallIds` contains
-0-64 unique values. Optional strings serialize
-as null when unknown. VID/PID match `^[0-9A-F]{4}$`; serial is 1-128; friendly name 0-200.
+0-64 unique values. Optional strings serialize as null when unknown. VID/PID match
+`^[0-9A-F]{4}$`; serial is 1-128; friendly name, manufacturer, model and description are each
+0-200. The server treats observed metadata as searchable attributes, not physical identity.
 `transport` is `usb`; capabilities are unique values from `usb_storage|mtp|ptp`.
 
 `AgentHealth` is `healthy|degraded|fail_closed|external_policy_conflict`.
@@ -198,7 +202,49 @@ Queue depth is 0-100000; error code is null or 1-100. Success 200:
 }
 ```
 
-## 8. Compatibility and conformance
+## 8. Administrator inventory API
+
+Administrator endpoints use the authenticated admin cookie and the same Problem Details and
+correlation conventions. Viewer and administrator roles may read; only administrators may mutate.
+Mutation handlers require anti-forgery validation.
+
+- `GET /api/v1/admin/search?q={text}&kind=all|device|workstation&page=1&pageSize=25`
+- `GET /api/v1/admin/devices?q={text}&page=1&pageSize=25&sort=lastSeen|name|manufacturer|model`
+- `GET /api/v1/admin/devices/{deviceId}`
+- `PUT /api/v1/admin/devices/{deviceId}/description`
+- `GET /api/v1/admin/workstations?q={text}&page=1&pageSize=25&sort=lastSeen|hostname`
+- `GET /api/v1/admin/workstations/{workstationId}`
+- `PUT /api/v1/admin/workstations/{workstationId}/description`
+- `GET /api/v1/admin/workstations/{workstationId}/devices/{deviceId}`
+- `POST /api/v1/admin/workstations/{workstationId}/devices/{deviceId}/grants`
+- `DELETE /api/v1/admin/workstations/{workstationId}/devices/{deviceId}/grants/{entryId}`
+
+Page size is `25|50|100`. Collection responses contain `items`, `page`, `pageSize`, `totalCount`
+and normalized `query`. Unknown sort/kind values return 400. Detail responses return 404 for a
+missing or soft-deleted resource. Search result text is plain data and never contains markup.
+Description updates accept `{ "description": "..." }`, where the value is null or trimmed to
+1-500 characters. They return 204, do not publish a policy version, and always append an audit row.
+
+Pair detail contains `workstation`, `device`, latest local instance/install IDs,
+`effectiveDecision`, `matchedEntryId`, `reasonCode`, `expiresAtUtc`, `policyVersion`,
+`requestQualification`, `observedEnforcement`, `lastObservedAtUtc`, `freshness`, `latestEvent`,
+and recent requests. `freshness` is `current|stale|offline`; `observedEnforcement` is
+`allowed|blocked|pending_change|unknown`. These values follow spec section 9 and are calculated at
+read time from current policy plus the latest observation.
+
+Grant request:
+
+```json
+{"expiresAtUtc":"2026-09-22T12:00:00.000Z","reason":"Approved engineering transfer"}
+```
+
+`expiresAtUtc` is null or a future UTC timestamp no more than 365 days ahead; reason is trimmed
+10-1000. Success is 201 and returns the created `entryId`, new `policyVersion`, and refreshed pair
+status. An equivalent active grant returns 409. Delete returns 204, soft-deactivates only the named
+active grant, publishes a new policy version, and is idempotent only when an idempotency key is
+replayed. Direct grants never alter historical access-request status.
+
+## 9. Compatibility and conformance
 
 Clients MUST send schema version 1. Server supports the current and immediately previous agent
 minor version. Unsupported schema returns 422 with `supportedSchemaVersions`. New optional fields

@@ -15,7 +15,7 @@ $env:DOTNET_NOLOGO = "1"
 dotnet build $project -c $Configuration
 if ($LASTEXITCODE -ne 0) { throw "Installer build failed." }
 
-$builtPackage = Get-ChildItem (Join-Path (Split-Path $project) "bin") -Recurse -Filter "RuisiUsbDlpAgent-1.0.0-x64.msi" |
+$builtPackage = Get-ChildItem (Join-Path (Split-Path $project) "bin") -Recurse -Filter "RuisiUsbDlpAgent-1.1.0-x64.msi" |
     Sort-Object LastWriteTime -Descending |
     Select-Object -First 1
 if (-not $builtPackage) { throw "The installer build completed but no MSI was produced." }

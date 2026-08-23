@@ -1,6 +1,6 @@
 # USB Device Control - Technical Specification
 
-Version 1.2 - 2026-08-22 - Windows v1 - approximately 300 managed workstations
+Version 1.3 - 2026-08-23 - Windows v1 - approximately 300 managed workstations
 
 This document is normative. `MUST`, `MUST NOT`, `SHOULD`, and `MAY` have their RFC 2119
 meanings. The test plan is the acceptance authority. Screenshots under `screenshots/en` and
@@ -17,7 +17,8 @@ The v1 product:
 - supports allow and block policy at global, group, and workstation scope;
 - continues enforcing the last valid policy while offline;
 - notifies interactive users and supports time-bounded access requests;
-- provides a bilingual web administration console and Windows notifier; and
+- provides a bilingual web administration console and Windows notifier;
+- maintains searchable USB-device and workstation inventory with pair-specific effective access; and
 - is deployed and operated as an enterprise Windows service.
 
 Explicit non-goals:
@@ -431,11 +432,21 @@ All IDs are UUIDs. All timestamps are UTC. EF concurrency tokens protect mutable
 
 - `Group`: id, unique name, mode, created/updated timestamps.
 - `Workstation`: id, unique machine SID, hostname, group ID, API-key salt/hash, key version,
-  agent version, last seen, applied policy version, enrollment and revoked timestamps.
+  agent version, administrator description, last seen, applied policy version, enrollment and
+  revoked timestamps. Hostname, machine SID and description have normalized searchable columns.
+- `UsbDevice`: id, identity kind (`serial` or `workstation_instance`), identity confidence
+  (`strong` or `local`), normalized identity hash, VID, PID, nullable serial, friendly name,
+  manufacturer, model, description, class/transport/capabilities, first-seen, last-seen and
+  created/updated timestamps. Manufacturer/model are observed values; description is
+  administrator-maintained and MUST NOT be overwritten by agent ingest.
+- `WorkstationDevice`: id, workstation ID, USB-device ID, normalized local instance ID, hardware
+  and installation IDs, first/last seen, last event/decision/reason/policy version, last connected
+  state and timestamp. The active pair is unique by workstation and normalized instance ID.
 - `DeviceEntry`: fields in section 5.2 plus added-by and created/updated timestamps.
 - `AccessRequest`: id, client request ID, workstation ID, user SID/name, complete device snapshot,
-  requested duration, justification, pending/approved/denied/cancelled/revoked status, decision reason,
-  decided-by/at, and resulting entry ID.
+  USB-device ID, workstation-device ID, requested duration, justification,
+  pending/approved/denied/cancelled/revoked status, decision reason, decided-by/at, and resulting
+  entry ID.
 - `Event`: server ID, unique workstation/client event ID pair, event type, timestamp, received-at,
   workstation/user/device snapshot, decision fields, detail JSON.
 - `PolicyVersion`: monotonically increasing version, schema version, published-at/by, reason and
@@ -447,9 +458,40 @@ All IDs are UUIDs. All timestamps are UTC. EF concurrency tokens protect mutable
 - `EnrollmentToken`: id, SHA-256 hash of 256-bit random token, created/expires/revoked timestamps,
   maximum uses and use count.
 
+`UsbDevice` and `WorkstationDevice` are the operational inventory. `AccessRequest` and `Event`
+remain immutable workflow/audit evidence and MUST NOT be used as the primary inventory read model.
+Accepted device events and access requests transactionally upsert the device and pair before their
+audit row is committed. Replayed client IDs MUST NOT change first-seen timestamps or create duplicate
+inventory rows; a later observation MAY refresh mutable observed metadata and last-seen fields.
+
+A trustworthy non-empty hardware serial forms a strong identity from normalized transport, VID,
+PID and serial. A missing, substituted or location-derived serial forms only a workstation-local
+identity from workstation ID and normalized canonical instance ID. Local identities MUST NOT be
+automatically merged across workstations, even when VID, PID, manufacturer and model match. An
+administrator-assisted merge is out of scope for v1. Identity hashes are deterministic SHA-256
+hashes over normalized server-computed fields and are not accepted from agents.
+
+Policy definitions and effective access are deliberately distinct. A `DeviceEntry` MAY still apply
+globally, to a group, or to a workstation. For any `WorkstationDevice`, the server evaluates the
+current compiled policy against its latest snapshot to produce a pair-specific `effectiveDecision`,
+matched entry, reason, expiry and policy version. Request-generated approvals and direct
+administrator grants are workstation-scoped entries linked to the pair. They use strong
+VID/PID/serial matching when available and exact instance/install-ID matching for local identities.
+
+The UI MUST report policy state separately from observed enforcement state. Policy state is
+`allowed` or `blocked`, optionally qualified by `pending_request`, `approval_expired`, or
+`approval_revoked`. Observed enforcement is `allowed`, `blocked`, `pending_change`, or `unknown`,
+and includes `lastObservedAtUtc`. A workstation not seen for 10 minutes or a pair with no event for
+24 hours is visibly `stale`; the console MUST NOT claim that stale/offline hardware is currently
+connected or enforced. A policy newer than the pair's last observed policy is `pending_change`.
+
 Database constraints MUST enforce enum values, required match fields, unique event idempotency,
-unique active machine SID, and referential integrity. Deleting referenced entities uses restrict or
-soft-delete; audit logs and policy snapshots are never cascade-deleted.
+unique active machine SID, inventory identity uniqueness, pair uniqueness, and referential
+integrity. Search indexes cover normalized device ID/VID/PID/serial/name/manufacturer/model/
+description and workstation ID/hostname/machine SID/description. Production PostgreSQL uses its
+native full-text/trigram indexes; SQLite uses indexed exact/prefix fields plus FTS5 for text. Search
+queries MUST NOT scan device JSON. Deleting referenced entities uses restrict or soft-delete;
+audit logs and policy snapshots are never cascade-deleted.
 
 ## 10. Agent API
 
@@ -476,9 +518,10 @@ per minute:
 - `GET /agent/policy`: returns `CompiledPolicy`; ETag is quoted policy version; matching
   `If-None-Match` returns 304 with no body.
 - `POST /agent/events`: body `{schemaVersion, events[]}`, 1-500 events, max 1 MiB. Returns
-  accepted and duplicate client IDs plus `policyChanged`.
+  accepted and duplicate client IDs plus `policyChanged`; accepted device events upsert inventory.
 - `POST /agent/requests`: one request, max 16 KiB, idempotent by client request ID. Returns request
-  ID and status. At most one pending request per workstation, user SID and canonical device.
+  ID and status. At most one pending request per workstation, user SID and canonical device. The
+  request references the inventory device/pair created or refreshed in the same transaction.
 - `POST /agent/heartbeat`: agent version, applied policy version, health state, queue depth and
   last enforcement error; returns server UTC and `policyChanged`.
 
@@ -527,9 +570,27 @@ control may become inaccessible. WPF dialogs scale correctly at 100%, 150%, and 
 
 ### 12.2 Required screens and states
 
-The console includes Login, Dashboard, Policies, Workstations, Requests, Events, and Settings.
-Dashboard/Policies/Workstations/Requests/Events match screenshots 1-5. Settings follows the same
-shell and contains Groups, Enrollment, Administrators, Server health, retention and audit export.
+The console includes Login, Dashboard, Devices, Policies, Workstations, Requests, Events, and
+Settings. Dashboard/Policies/Workstations/Requests/Events match screenshots 1-5. Devices uses the
+same visual system. Settings follows the same shell and contains Groups, Enrollment,
+Administrators, Server health, retention and audit export.
+
+Devices and Workstations are the primary operational navigation. Both provide server-side search,
+stable sort, filters and pagination. A unified query searches exact UUID/instance/SID values first,
+then case-insensitive tokenized text. Device fields are ID, instance ID, VID, PID, serial, friendly
+name, manufacturer, model and description. Workstation fields are ID, hostname, machine SID and
+description. Query text is trimmed, 2-200 characters except that exact IDs may be one character or
+longer; all terms must match within one result. Results show matching-field context without unsafe
+HTML highlighting.
+
+Device detail shows identity confidence and every observed workstation pair. Workstation detail
+shows every observed USB device. Each pair shows effective policy decision/source/expiry, request
+qualification, observed enforcement and freshness, latest event, and compact request history.
+Administrators can create a time-bounded or non-expiring pair grant, revoke an active pair grant,
+or open the originating request. Viewers can search and inspect but cannot mutate. Direct grant and
+revoke operations publish a new policy version and append an audit record. Requests remains an
+approval inbox and historical audit view; administrators never need to scan it to determine the
+current status of a device or workstation.
 
 Required dialogs include add/edit/delete policy, change group, add workstation override, approve
 request, deny request with required reason, revoke approved access, rotate/revoke token,
@@ -622,3 +683,7 @@ runbooks.
    tests and the signed VM hardware matrix.
 10. API authentication, idempotency, limits, authorization, CSRF, lockout, secret redaction,
     certificate rotation and audit mutation coverage pass integration/security tests.
+11. Device and workstation searches return normalized inventory without scanning request/event
+    JSON; device/workstation detail reports every observed pair with accurate effective policy,
+    observed enforcement and freshness. Direct pair grants and revocations converge through normal
+    policy publication and are fully audited.

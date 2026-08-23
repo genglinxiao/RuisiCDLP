@@ -75,4 +75,33 @@
   <data name="Invalid credentials or bootstrap administrator is not configured." xml:space="preserve"><value>凭据无效或未配置引导管理员。</value></data>
   <data name="Revoke access" xml:space="preserve"><value>撤销访问</value></data>
   <data name="Revoke confirmation" xml:space="preserve"><value>确定撤销此设备的批准吗？工作站将在下一次策略轮询后阻止该设备。</value></data>
+  <data name="Devices" xml:space="preserve"><value>USB 设备</value></data>
+  <data name="Search observed USB devices and inspect access on every workstation." xml:space="preserve"><value>搜索已发现的 USB 设备并查看其在每台工作站上的访问状态。</value></data>
+  <data name="Search devices" xml:space="preserve"><value>搜索设备</value></data>
+  <data name="ID, instance, VID/PID, serial, name, manufacturer, model or description" xml:space="preserve"><value>ID、实例、VID/PID、序列号、名称、制造商、型号或描述</value></data>
+  <data name="Search" xml:space="preserve"><value>搜索</value></data>
+  <data name="Close detail" xml:space="preserve"><value>关闭详情</value></data>
+  <data name="Manufacturer" xml:space="preserve"><value>制造商</value></data>
+  <data name="Model" xml:space="preserve"><value>型号</value></data>
+  <data name="Description" xml:space="preserve"><value>描述</value></data>
+  <data name="Workstation access" xml:space="preserve"><value>工作站访问状态</value></data>
+  <data name="No devices match this search." xml:space="preserve"><value>没有符合搜索条件的设备。</value></data>
+  <data name="Search workstations" xml:space="preserve"><value>搜索工作站</value></data>
+  <data name="ID, hostname, machine SID or description" xml:space="preserve"><value>ID、主机名、计算机 SID 或描述</value></data>
+  <data name="Machine SID" xml:space="preserve"><value>计算机 SID</value></data>
+  <data name="Observed USB devices" xml:space="preserve"><value>已发现的 USB 设备</value></data>
+  <data name="No workstations match this search." xml:space="preserve"><value>没有符合搜索条件的工作站。</value></data>
+  <data name="Policy source" xml:space="preserve"><value>策略来源</value></data>
+  <data name="Observed enforcement" xml:space="preserve"><value>最近执行状态</value></data>
+  <data name="Expires" xml:space="preserve"><value>到期时间</value></data>
+  <data name="No expiry" xml:space="preserve"><value>永不过期</value></data>
+  <data name="Last observed" xml:space="preserve"><value>最近发现</value></data>
+  <data name="Never" xml:space="preserve"><value>从未</value></data>
+  <data name="Request state" xml:space="preserve"><value>申请状态</value></data>
+  <data name="None" xml:space="preserve"><value>无</value></data>
+  <data name="Revoke direct grant" xml:space="preserve"><value>撤销直接授权</value></data>
+  <data name="Grant expiry" xml:space="preserve"><value>授权到期时间</value></data>
+  <data name="Grant access" xml:space="preserve"><value>授予访问权限</value></data>
+  <data name="Recent requests" xml:space="preserve"><value>最近申请</value></data>
+  <data name="Save description" xml:space="preserve"><value>保存描述</value></data>
 </root>

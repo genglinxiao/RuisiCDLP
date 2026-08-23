@@ -28,7 +28,10 @@ public sealed record DeviceSnapshot(
     string? Service,
     string FriendlyName,
     string Transport,
-    IReadOnlyList<string> Capabilities);
+    IReadOnlyList<string> Capabilities,
+    string? Manufacturer = null,
+    string? Model = null,
+    string? Description = null);
 
 public sealed record AgentEvent(
     Guid ClientEventId,

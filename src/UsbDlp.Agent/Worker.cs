@@ -177,7 +177,8 @@ public sealed partial class Worker(
 
     private static DeviceSnapshot Snapshot(DeviceInfo device) => new(
         device.InstanceId, device.HardwareIds, device.DeviceInstallIds, device.Vid, device.Pid,
-        device.Serial, device.ClassGuid, device.Service, device.FriendlyName, device.Transport, device.Capabilities);
+        device.Serial, device.ClassGuid, device.Service, device.FriendlyName, device.Transport,
+        device.Capabilities, device.Manufacturer, device.Model, device.Description);
 
     [LoggerMessage(EventId = 1100, Level = LogLevel.Information, Message = "Policy v{PolicyVersion}; queue {QueueDepth}; dry-run {DryRun}")]
     private partial void LogHeartbeat(long policyVersion, int queueDepth, bool dryRun);

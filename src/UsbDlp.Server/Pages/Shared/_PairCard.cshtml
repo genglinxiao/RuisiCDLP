@@ -1,0 +1,25 @@
+@model UsbDlp.Server.Data.WorkstationDeviceRow
+@inject UsbDlp.Server.SharedResource L
+<article class="pair-card">
+  <div class="pair-heading">
+    <div><strong>@Model.DeviceName</strong><span>@Model.Hostname</span><code>@Model.InstanceId</code></div>
+    <div class="pair-badges"><span class="badge @Model.EffectiveDecision">@Model.EffectiveDecision</span><span class="badge @Model.Freshness">@Model.Freshness</span></div>
+  </div>
+  <div class="pair-facts">
+    <span><b>@L["Policy source"]</b>@Model.PolicySource</span>
+    <span><b>@L["Observed enforcement"]</b>@Model.ObservedEnforcement</span>
+    <span><b>@L["Policy version"]</b>v@Model.PolicyVersion</span>
+    <span><b>@L["Expires"]</b>@(Model.ExpiresAtUtc?.ToLocalTime().ToString("g") ?? L["No expiry"])</span>
+    <span><b>@L["Last observed"]</b>@(Model.LastObservedAtUtc?.ToLocalTime().ToString("g") ?? L["Never"])</span>
+    <span><b>@L["Request state"]</b>@(Model.RequestQualification ?? L["None"])</span>
+  </div>
+  @if(Model.CanRevoke && Model.MatchedEntryId is { } entryId){<button class="danger-button pair-revoke" data-workstation="@Model.WorkstationId" data-device="@Model.DeviceId" data-entry="@entryId">@L["Revoke direct grant"]</button>}
+  else if(Model.EffectiveDecision=="block"){
+    <form class="pair-grant" data-workstation="@Model.WorkstationId" data-device="@Model.DeviceId">
+      <label>@L["Grant expiry"]<input name="expiresAtUtc" type="datetime-local" /></label>
+      <label>@L["Reason"]<input name="reason" minlength="10" maxlength="1000" required /></label>
+      <button class="primary" type="submit">@L["Grant access"]</button><span class="form-status" role="status"></span>
+    </form>
+  }
+  @if(Model.RecentRequests.Count>0){<details><summary>@L["Recent requests"] (@Model.RecentRequests.Count)</summary>@foreach(var request in Model.RecentRequests){<p><span class="badge @request.Status">@request.Status</span> @request.CreatedAtUtc.ToLocalTime().ToString("g") · @request.Username</p>}</details>}
+</article>

@@ -3,7 +3,7 @@
     <OutputType>Package</OutputType>
     <Platform>x64</Platform>
     <InstallerPlatform>x64</InstallerPlatform>
-    <OutputName>RuisiUsbDlpAgent-1.0.0-x64</OutputName>
+    <OutputName>RuisiUsbDlpAgent-1.1.0-x64</OutputName>
     <PayloadRoot>$(BaseIntermediateOutputPath)payload</PayloadRoot>
     <ManualPayloadRoot>$(BaseIntermediateOutputPath)manual</ManualPayloadRoot>
     <DefineConstants>AgentServiceExe=$(ManualPayloadRoot)\UsbDlp.Agent.exe;CliExe=$(ManualPayloadRoot)\UsbDlp.Cli.exe;PayloadRoot=$(PayloadRoot)</DefineConstants>

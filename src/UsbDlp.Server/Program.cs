@@ -126,6 +126,55 @@ agentApi.MapPost("/heartbeat", async (HttpContext context, HeartbeatRequest requ
 
 RouteGroupBuilder adminApi = app.MapGroup("/api/v1/admin").RequireAuthorization();
 adminApi.MapGet("/dashboard", async (UsbDlpRepository store, CancellationToken token) => Results.Json(await store.DashboardAsync(token), PolicyJson.Options));
+adminApi.MapGet("/search", async (string? q, string? kind, int? page, int? pageSize, UsbDlpRepository store, CancellationToken token) =>
+{
+    string selectedKind = kind ?? "all"; int selectedPage = page ?? 1; int selectedSize = pageSize ?? 25;
+    if (selectedKind is not ("all" or "device" or "workstation") || !ValidPage(selectedPage, selectedSize) || !ValidQuery(q))
+        return Results.ValidationProblem(new Dictionary<string, string[]> { ["query"] = ["Search parameters are invalid."] });
+    return Results.Json(await store.SearchInventoryAsync(q, selectedKind, selectedPage, selectedSize, token), PolicyJson.Options);
+});
+adminApi.MapGet("/devices", async (string? q, int? page, int? pageSize, string? sort, UsbDlpRepository store, CancellationToken token) =>
+{
+    int selectedPage = page ?? 1; int selectedSize = pageSize ?? 25; string selectedSort = sort ?? "lastSeen";
+    if (!ValidPage(selectedPage, selectedSize) || !ValidQuery(q) || selectedSort is not ("lastSeen" or "name" or "manufacturer" or "model"))
+        return Results.ValidationProblem(new Dictionary<string, string[]> { ["query"] = ["Device search parameters are invalid."] });
+    return Results.Json(await store.SearchDevicesAsync(q, selectedPage, selectedSize, selectedSort, token), PolicyJson.Options);
+});
+adminApi.MapGet("/devices/{id:guid}", async (Guid id, UsbDlpRepository store, CancellationToken token) =>
+    await store.DeviceDetailAsync(id, token) is { } detail ? Results.Json(detail, PolicyJson.Options) : Results.NotFound());
+adminApi.MapPut("/devices/{id:guid}/description", async (Guid id, DescriptionRequest request, HttpContext context, UsbDlpRepository store, CancellationToken token) =>
+{
+    try { return await store.UpdateDescriptionAsync("device", id, request.Description, context.User.Identity?.Name ?? "admin", token) ? Results.NoContent() : Results.NotFound(); }
+    catch (ArgumentException exception) { return Results.ValidationProblem(new Dictionary<string, string[]> { ["description"] = [exception.Message] }); }
+}).RequireAuthorization(policy => policy.RequireRole("admin"));
+adminApi.MapGet("/workstations", async (string? q, int? page, int? pageSize, string? sort, UsbDlpRepository store, CancellationToken token) =>
+{
+    int selectedPage = page ?? 1; int selectedSize = pageSize ?? 25; string selectedSort = sort ?? "lastSeen";
+    if (!ValidPage(selectedPage, selectedSize) || !ValidQuery(q) || selectedSort is not ("lastSeen" or "hostname"))
+        return Results.ValidationProblem(new Dictionary<string, string[]> { ["query"] = ["Workstation search parameters are invalid."] });
+    return Results.Json(await store.SearchWorkstationsAsync(q, selectedPage, selectedSize, selectedSort, token), PolicyJson.Options);
+});
+adminApi.MapGet("/workstations/{id:guid}", async (Guid id, UsbDlpRepository store, CancellationToken token) =>
+    await store.WorkstationDetailAsync(id, token) is { } detail ? Results.Json(detail, PolicyJson.Options) : Results.NotFound());
+adminApi.MapPut("/workstations/{id:guid}/description", async (Guid id, DescriptionRequest request, HttpContext context, UsbDlpRepository store, CancellationToken token) =>
+{
+    try { return await store.UpdateDescriptionAsync("workstation", id, request.Description, context.User.Identity?.Name ?? "admin", token) ? Results.NoContent() : Results.NotFound(); }
+    catch (ArgumentException exception) { return Results.ValidationProblem(new Dictionary<string, string[]> { ["description"] = [exception.Message] }); }
+}).RequireAuthorization(policy => policy.RequireRole("admin"));
+adminApi.MapGet("/workstations/{workstationId:guid}/devices/{deviceId:guid}", async (Guid workstationId, Guid deviceId, UsbDlpRepository store, CancellationToken token) =>
+    await store.PairDetailAsync(workstationId, deviceId, token) is { } pair ? Results.Json(pair, PolicyJson.Options) : Results.NotFound());
+adminApi.MapPost("/workstations/{workstationId:guid}/devices/{deviceId:guid}/grants", async (Guid workstationId, Guid deviceId, GrantRequest request, HttpContext context, UsbDlpRepository store, CancellationToken token) =>
+{
+    try
+    {
+        GrantResponse? result = await store.AddPairGrantAsync(workstationId, deviceId, request, context.User.Identity?.Name ?? "admin", token);
+        return result is null ? Results.NotFound() : Results.Created($"/api/v1/admin/workstations/{workstationId}/devices/{deviceId}", result);
+    }
+    catch (ArgumentException exception) { return Results.ValidationProblem(new Dictionary<string, string[]> { ["grant"] = [exception.Message] }); }
+    catch (InvalidOperationException exception) { return Results.Conflict(new { title = exception.Message, status = 409 }); }
+}).RequireAuthorization(policy => policy.RequireRole("admin"));
+adminApi.MapDelete("/workstations/{workstationId:guid}/devices/{deviceId:guid}/grants/{entryId:guid}", async (Guid workstationId, Guid deviceId, Guid entryId, HttpContext context, UsbDlpRepository store, CancellationToken token) =>
+    await store.RevokePairGrantAsync(workstationId, deviceId, entryId, context.User.Identity?.Name ?? "admin", token) ? Results.NoContent() : Results.NotFound()).RequireAuthorization(policy => policy.RequireRole("admin"));
 adminApi.MapPost("/policies", async (HttpContext context, AddPolicyRequest request, UsbDlpRepository store, CancellationToken token) =>
 {
     try
@@ -137,15 +186,15 @@ adminApi.MapPost("/policies", async (HttpContext context, AddPolicyRequest reque
     {
         return Results.ValidationProblem(exception.Errors.GroupBy(error => error.Code).ToDictionary(group => group.Key, group => group.Select(error => error.Message).ToArray()));
     }
-});
+}).RequireAuthorization(policy => policy.RequireRole("admin"));
 adminApi.MapDelete("/policies/{id:guid}", async (Guid id, HttpContext context, UsbDlpRepository store, CancellationToken token) =>
-    await store.DeletePolicyAsync(id, context.User.Identity?.Name ?? "admin", token) ? Results.NoContent() : Results.NotFound());
+    await store.DeletePolicyAsync(id, context.User.Identity?.Name ?? "admin", token) ? Results.NoContent() : Results.NotFound()).RequireAuthorization(policy => policy.RequireRole("admin"));
 adminApi.MapPost("/requests/{id:guid}/approve", async (Guid id, DecisionRequest request, HttpContext context, UsbDlpRepository store, CancellationToken token) =>
-    await store.DecideRequestAsync(id, true, request, context.User.Identity?.Name ?? "admin", token) ? Results.Ok() : Results.NotFound());
+    await store.DecideRequestAsync(id, true, request, context.User.Identity?.Name ?? "admin", token) ? Results.Ok() : Results.NotFound()).RequireAuthorization(policy => policy.RequireRole("admin"));
 adminApi.MapPost("/requests/{id:guid}/deny", async (Guid id, DecisionRequest request, HttpContext context, UsbDlpRepository store, CancellationToken token) =>
-    await store.DecideRequestAsync(id, false, request, context.User.Identity?.Name ?? "admin", token) ? Results.Ok() : Results.NotFound());
+    await store.DecideRequestAsync(id, false, request, context.User.Identity?.Name ?? "admin", token) ? Results.Ok() : Results.NotFound()).RequireAuthorization(policy => policy.RequireRole("admin"));
 adminApi.MapPost("/requests/{id:guid}/revoke", async (Guid id, HttpContext context, UsbDlpRepository store, CancellationToken token) =>
-    await store.RevokeRequestApprovalAsync(id, context.User.Identity?.Name ?? "admin", token) ? Results.Ok() : Results.NotFound());
+    await store.RevokeRequestApprovalAsync(id, context.User.Identity?.Name ?? "admin", token) ? Results.Ok() : Results.NotFound()).RequireAuthorization(policy => policy.RequireRole("admin"));
 
 app.MapGet("/culture/{culture}", (string culture, string? returnUrl, HttpContext context) =>
 {
@@ -164,5 +213,8 @@ static async Task<AuthenticatedAgent?> AuthenticateAsync(HttpContext context, Us
     string authorization = context.Request.Headers.Authorization.ToString();
     return authorization.StartsWith("Bearer ", StringComparison.Ordinal) ? await repository.AuthenticateAsync(authorization[7..], cancellationToken) : null;
 }
+
+static bool ValidPage(int page, int pageSize) => page > 0 && pageSize is 25 or 50 or 100;
+static bool ValidQuery(string? query) => query is null || query.Trim().Length <= 200;
 
 public partial class Program;

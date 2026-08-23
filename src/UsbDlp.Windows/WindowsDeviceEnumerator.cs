@@ -18,7 +18,9 @@ public sealed class WindowsDeviceEnumerator : IWindowsDeviceEnumerator
     private const uint RegPropertyCompatibleIds = 3;
     private const uint RegPropertyService = 5;
     private const uint RegPropertyClassGuid = 9;
+    private const uint RegPropertyManufacturer = 12;
     private const uint RegPropertyFriendlyName = 13;
+    private const uint RegPropertyDeviceDescription = 1;
     private const string WpdClassGuid = "{eec5ad98-8080-425f-922a-dabf3de3f69a}";
 
     public IReadOnlyList<DeviceInfo> EnumerateInScopeDevices()
@@ -71,6 +73,12 @@ public sealed class WindowsDeviceEnumerator : IWindowsDeviceEnumerator
             IReadOnlyList<string> governedCompatibleIds = ReadMultiStringProperty(devNode, RegPropertyCompatibleIds);
             string friendlyName = ReadStringProperty(devNode, RegPropertyFriendlyName) ??
                 ReadStringProperty(canonical.Value.CanonicalNode, RegPropertyFriendlyName) ?? canonical.Value.CanonicalId;
+            string? manufacturer = ReadStringProperty(canonical.Value.CanonicalNode, RegPropertyManufacturer) ??
+                ReadStringProperty(devNode, RegPropertyManufacturer);
+            string? description = ReadStringProperty(devNode, RegPropertyDeviceDescription) ??
+                ReadStringProperty(canonical.Value.CanonicalNode, RegPropertyDeviceDescription);
+            string? model = ReadBusReportedDescription(canonical.Value.CanonicalNode) ??
+                ReadBusReportedDescription(devNode);
             // Keep the governed child first so enforcement does not disable unrelated
             // functions exposed by the same composite USB peripheral.
             List<string> installIds = [
@@ -94,7 +102,10 @@ public sealed class WindowsDeviceEnumerator : IWindowsDeviceEnumerator
                 friendlyName,
                 "usb",
                 storage ? ["usb_storage"] : ["mtp"],
-                canonical.Value.AncestryGuids);
+                canonical.Value.AncestryGuids,
+                manufacturer,
+                model,
+                description);
             if (deviceIndexes.TryGetValue(canonical.Value.CanonicalId, out existingIndex))
             {
                 // A storage node governs the whole disk. Prefer it over a WPD volume child so
@@ -196,6 +207,28 @@ public sealed class WindowsDeviceEnumerator : IWindowsDeviceEnumerator
         return result == CrSuccess ? buffer[..(int)length] : [];
     }
 
+    private static string? ReadBusReportedDescription(uint devNode)
+    {
+        DevPropKey key = new(new Guid("540b947e-8b40-45bc-a8a2-6a0b894cbda2"), 4);
+        uint length = 0;
+        _ = NativeMethods.CM_Get_DevNode_PropertyW(devNode, ref key, out _, null, ref length, 0);
+        if (length < 2 || length > 4096)
+        {
+            return null;
+        }
+
+        byte[] buffer = new byte[length];
+        uint result = NativeMethods.CM_Get_DevNode_PropertyW(devNode, ref key, out _, buffer, ref length, 0);
+        return result == CrSuccess ? Encoding.Unicode.GetString(buffer, 0, (int)length).TrimEnd('\0') : null;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct DevPropKey(Guid formatId, uint propertyId)
+    {
+        public Guid FormatId = formatId;
+        public uint PropertyId = propertyId;
+    }
+
     private static class NativeMethods
     {
         [DllImport("cfgmgr32.dll", CharSet = CharSet.Unicode)]
@@ -215,5 +248,8 @@ public sealed class WindowsDeviceEnumerator : IWindowsDeviceEnumerator
 
         [DllImport("cfgmgr32.dll")]
         internal static extern uint CM_Get_DevNode_Registry_PropertyW(uint devNode, uint property, out uint registryType, [Out] byte[]? buffer, ref uint bufferLength, uint flags);
+
+        [DllImport("cfgmgr32.dll", CharSet = CharSet.Unicode)]
+        internal static extern uint CM_Get_DevNode_PropertyW(uint devNode, ref DevPropKey propertyKey, out uint propertyType, [Out] byte[]? buffer, ref uint bufferLength, uint flags);
     }
 }

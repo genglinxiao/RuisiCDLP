@@ -131,8 +131,11 @@ Tests to write first (integration tests using WebApplicationFactory + EF Core SQ
   mode, and excludes other groups' entries.
 - T-M6-08 through T-M6-12: limits/Problem Details, credential rotation, enrollment idempotency,
   request constraints, transactional publication and monotonic rollback.
+- T-M6-13 through T-M6-20: inventory upsert/idempotency, strong versus local identity isolation,
+  JSON-free indexed search, pair detail status/freshness, legacy backfill, direct grant and revoke.
 
-Then implement EF Core entities (spec §9) + migrations; the agent REST API (spec §10)
+Then implement EF Core entities (spec §9) + migrations, including UsbDevice and
+WorkstationDevice operational inventory; the agent REST API (spec §10)
 with Bearer-key middleware, rate limiting, max body size, idempotent event ingest; and
 PolicyCompiler (spec §5.3) that snapshots each version. SQLite by default, connection-string
 switch to PostgreSQL.
@@ -154,10 +157,13 @@ Tests to write first:
 - T-M7-06: requesting a page with culture=zh-CN renders the zh-CN string for a known key.
 - T-M7-07 through T-M7-10: auth/cookie/CSRF security, safe CSV, required UI states, and
   accessibility/zoom behavior.
+- T-M7-11 through T-M7-15: device/workstation search and detail, pair status, viewer read-only
+  behavior, direct grant/revoke auditing, and safe no-results/pagination behavior.
 
 Then build the pages matching `screenshots/en` and `screenshots/zh` (EN + ZH): Login (cookie auth,
-argon2), Dashboard, Policies (layered table + add/edit modal w/ wildcard serial + expiry),
-Workstations (list + detail + add-override), Requests (approve→scoped allow / deny+reason),
+argon2), Dashboard, Devices (search + detail + workstation pairs), Policies (layered table +
+add/edit modal w/ wildcard serial + expiry), Workstations (search + detail + observed devices),
+Requests (approve→scoped allow / deny+reason),
 Events (filter + safe CSV export), Settings (groups, token rotation, admin users, health,
 retention and audit export). Implement every state and responsive rule in spec §12. CSRF on all
 forms; culture via CookieRequestCultureProvider + top-bar switcher; all strings via .resx.
