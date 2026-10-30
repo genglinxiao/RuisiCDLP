@@ -1,0 +1,35 @@
+<Project Sdk="WixToolset.Sdk/4.0.6">
+  <PropertyGroup>
+    <OutputType>Package</OutputType>
+    <Platform Condition="'$(Platform)' == ''">x86</Platform>
+    <TargetProfile Condition="'$(TargetProfile)' == ''">win7</TargetProfile>
+    <ProductVersion Condition="'$(TargetProfile)' == 'xp'">1.1.2</ProductVersion>
+    <ProductVersion Condition="'$(ProductVersion)' == ''">1.1.0</ProductVersion>
+    <IntermediateOutputPath>obj\$(TargetProfile)\$(Platform)\$(Configuration)\</IntermediateOutputPath>
+    <InstallerPlatform>$(Platform)</InstallerPlatform>
+    <LegacyArch Condition="'$(Platform)' == 'x64'">x64</LegacyArch>
+    <LegacyArch Condition="'$(LegacyArch)' == ''">x86</LegacyArch>
+    <ProgramFilesId Condition="'$(Platform)' == 'x64'">ProgramFiles64Folder</ProgramFilesId>
+    <ProgramFilesId Condition="'$(ProgramFilesId)' == ''">ProgramFilesFolder</ProgramFilesId>
+    <ComponentBitness Condition="'$(Platform)' == 'x64'">always64</ComponentBitness>
+    <ComponentBitness Condition="'$(ComponentBitness)' == ''">always32</ComponentBitness>
+    <PayloadDir Condition="'$(TargetProfile)' == 'win7'">$(MSBuildThisFileDirectory)..\..\legacy\build-win7-$(LegacyArch)\Release</PayloadDir>
+    <PayloadDir Condition="'$(TargetProfile)' == 'win10'">$(MSBuildThisFileDirectory)..\..\legacy\build-win10-$(LegacyArch)\Release</PayloadDir>
+    <PayloadDir Condition="'$(TargetProfile)' == 'xp'">$(MSBuildThisFileDirectory)..\..\legacy\build-xp-x86\Release</PayloadDir>
+    <OutputName Condition="'$(TargetProfile)' == 'win7'">RuisiUsbDlpLegacyServer-1.1.0-$(LegacyArch)</OutputName>
+    <OutputName Condition="'$(TargetProfile)' == 'win10'">RuisiUsbDlpWin10Server-1.1.0-$(LegacyArch)</OutputName>
+    <OutputName Condition="'$(TargetProfile)' == 'xp'">RuisiUsbDlpXpServer-$(ProductVersion)-x86</OutputName>
+    <ProductName Condition="'$(TargetProfile)' == 'win7'">Ruisi USB DLP Windows 7 Server ($(LegacyArch))</ProductName>
+    <ProductName Condition="'$(TargetProfile)' == 'win10'">Ruisi USB DLP Windows 10 Server ($(LegacyArch))</ProductName>
+    <ProductName Condition="'$(TargetProfile)' == 'xp'">Ruisi USB DLP Windows XP Server (x86)</ProductName>
+    <ProductUpgradeCode Condition="'$(TargetProfile)' == 'win7' and '$(Platform)' == 'x86'">{08623C99-6BC3-4F26-B700-6B9D4A70A7AF}</ProductUpgradeCode>
+    <ProductUpgradeCode Condition="'$(TargetProfile)' == 'win7' and '$(Platform)' == 'x64'">{4BE1E17B-6CA0-4ABB-A781-A0FD7ADC6E2F}</ProductUpgradeCode>
+    <ProductUpgradeCode Condition="'$(TargetProfile)' == 'win10' and '$(Platform)' == 'x86'">{E5C83600-EE35-4706-AAE2-3FAB5A153F55}</ProductUpgradeCode>
+    <ProductUpgradeCode Condition="'$(TargetProfile)' == 'win10' and '$(Platform)' == 'x64'">{4A4417A8-1B7C-41A8-897A-23C6B66601CF}</ProductUpgradeCode>
+    <ProductUpgradeCode Condition="'$(TargetProfile)' == 'xp'">{D6B3A2C8-5648-4852-AFC7-E5994FEB3DC6}</ProductUpgradeCode>
+    <DefineConstants>PayloadDir=$(PayloadDir);ProgramFilesId=$(ProgramFilesId);ComponentBitness=$(ComponentBitness);LegacyArch=$(LegacyArch);TargetProfile=$(TargetProfile);ProductName=$(ProductName);ProductVersion=$(ProductVersion);ProductUpgradeCode=$(ProductUpgradeCode)</DefineConstants>
+  </PropertyGroup>
+  <Target Name="RejectUnsupportedXpArchitecture" BeforeTargets="Build" Condition="'$(TargetProfile)' == 'xp' and '$(Platform)' != 'x86'">
+    <Error Text="The Windows XP profile supports x86 only." />
+  </Target>
+</Project>

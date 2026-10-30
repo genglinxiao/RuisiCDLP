@@ -1,7 +1,7 @@
 # USB Device Control — Implementation Prompts (TDD, staged)
 
 Sequenced prompts for a coding agent (a lesser model than the architect). The work is
-grouped into five **stages**. Each stage ends at a **human verification gate** — a point
+grouped into six **stages**. Each stage ends at a **human verification gate** — a point
 where you (a person) can build, run, and confirm real behavior before the agent proceeds.
 Within each stage, every milestone follows **red → green → refactor**: the agent writes
 failing tests first, then the minimum code to pass, then cleans up.
@@ -18,6 +18,7 @@ Stage B  Server + admin UI         (M6, M7)      → GATE B  (run on any machine
 Stage C  Agent device layer        (M2, M3)      → GATE C  (Windows VM, dry-run first)
 Stage D  Agent integration         (M4, M5)      → GATE D  (VM + server, end-to-end)
 Stage E  Notifier + installer      (M8)          → GATE E  (clean VM, full deploy)
+Stage F  Legacy compatibility      (M10)         → GATE F  (XP/7/10 x86/x64 matrix)
 ```
 
 ---
@@ -40,9 +41,10 @@ so they map to usb-dlp-test-plan.md.
 ## Engineering rules — also prepend to EVERY prompt
 
 ```
-You are implementing part of a Windows USB device-control system in C# / .NET 8.
-- Frameworks: net8.0 for shared/server, net8.0-windows for agent/notifier.
-- User-mode ONLY. No kernel driver, no C++. Windows APIs via P/Invoke.
+You are implementing part of a multi-generation Windows USB device-control system.
+- Modern profile: C#/.NET 8 (`net8.0` server/shared and `net8.0-windows` agent/notifier).
+- Legacy profile: native Win32 C/C++ with a static runtime and no CLR dependency.
+- User-mode ONLY. No kernel driver. Modern Windows APIs use P/Invoke; legacy APIs use native adapters.
 - Do NOT invent architecture. `usb-dlp-spec.md` is normative. If it is ambiguous, stop and
   request a specification decision; do not encode unspecified behavior.
 - All user-facing strings in .resx (en-US default + zh-CN). Never hard-code a display string.
@@ -314,11 +316,40 @@ attestation — there is no kernel driver). Document signing + GPO/Intune/SCCM d
 ```
 Acceptance: T-M8-* green.
 
-### ▶ GATE E — human verification (see test-plan §E) — clean Win11 VM
+### ▶ GATE E — human verification (see test-plan §E) — clean modern x64 VM
 Deploy the MSI; confirm service auto-starts, notifier shows a **localized** toast on block,
 Request access reaches the console and round-trips to an approval, and uninstall cleans up.
 Run the full end-to-end acceptance list in spec §8 one last time in both languages.
-**Final sign-off = release candidate.**
+**Gate E sign-off = modern-profile candidate; Gate F is still required for the full release.**
+
+---
+
+## M10 — Native XP/Windows 7 compatibility profiles
+
+```
+Tests to write first:
+- T-M10-01 through T-M10-13 from usb-dlp-test-plan.md.
+
+Do not retarget or weaken the modern .NET projects. Create an isolated `legacy/` native build for
+XP SP3 x86 and Windows 7 SP1 x86/x64, plus modern Windows 10 x86 packaging. Generate canonical
+policy and API fixtures once and run them against every implementation. Implement native agent,
+notifier, server, local recovery CLI, SQLite persistence, portable TLS 1.2, ACL/integrity checks,
+SetupAPI/CfgMgr32 OS adapters and exact-profile MSI launch conditions.
+
+The XP adapter must report `legacy_backstop_unavailable`; do not claim the modern layered
+installation backstop. Legacy servers default to loopback, require explicit risk acceptance, show
+the persistent legacy warning and are administered from a current remote browser. Produce an SBOM,
+reproducible dependency builds, API/database migration tools, and agent/server MSI pairs for every
+profile. Assemble the exact restricted deployment-kit layout in spec section 15, with XP-compatible
+`.cmd` scripts that force live/default-deny client installation without exposing secret values.
+No package ships until the full Gate F cross-product matrix passes.
+```
+Acceptance: T-M10-* green and every Gate F item signed.
+
+### ▶ GATE F — human verification (see test-plan §F) — isolated legacy VM matrix
+Run XP SP3 x86, Windows 7 SP1 x86/x64, and Windows 10 x86/x64 agent/server combinations. Validate
+hardware behavior, API parity, TLS rejection cases, risk disclosure, upgrade and removal. A passing
+modern test is not evidence for a legacy profile.
 
 ---
 

@@ -1,0 +1,111 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+  <Package
+      Name="Ruisi USB DLP Server"
+      Manufacturer="Ruisi"
+      Version="1.1.0"
+      UpgradeCode="{36B21922-0FF2-4422-9267-C34676792CA3}"
+      Scope="perMachine"
+      InstallerVersion="500"
+      Compressed="yes">
+
+    <SummaryInformation Description="Ruisi USB device-control administration server" />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Ruisi USB DLP Server is already installed." />
+
+    <Property Id="LISTENURL" Value="http://127.0.0.1:5091" Secure="yes" />
+    <Property Id="ADMINUSERNAME" Value="admin" Secure="yes" />
+    <Property Id="ADMINPASSWORDFILE" Secure="yes" Hidden="yes" />
+    <Property Id="ENROLLMENTTOKENFILE" Secure="yes" Hidden="yes" />
+    <Property Id="ALLOWINSECUREHTTP" Value="true" Secure="yes" />
+    <Property Id="ARPNOREPAIR" Value="1" />
+
+    <Launch Condition="VersionNT64" Message="Ruisi USB DLP Server requires 64-bit Windows." />
+    <Launch Condition="Installed OR WIX_UPGRADE_DETECTED OR ADMINPASSWORDFILE" Message="Provide ADMINPASSWORDFILE for a new installation." />
+    <Launch Condition="Installed OR WIX_UPGRADE_DETECTED OR ENROLLMENTTOKENFILE" Message="Provide ENROLLMENTTOKENFILE for a new installation." />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Ruisi USB DLP Server" />
+    </StandardDirectory>
+    <StandardDirectory Id="CommonAppDataFolder">
+      <Directory Id="RuisiDataFolder" Name="Ruisi">
+        <Directory Id="DataFolder" Name="UsbDlpServer" />
+      </Directory>
+    </StandardDirectory>
+
+    <Component Id="ServerServiceComponent" Directory="INSTALLFOLDER" Guid="{CBAC0872-0874-47A6-8EDB-A89E54F15BEA}" Bitness="always64">
+      <File Id="ServerServiceExe" Source="$(var.ServerExe)" KeyPath="yes" />
+      <ServiceInstall
+          Id="ServerServiceInstall"
+          Name="UsbDlp.Server"
+          DisplayName="Ruisi USB DLP Server"
+          Description="Central administration and policy server for Ruisi USB DLP"
+          Type="ownProcess"
+          Start="auto"
+          ErrorControl="normal"
+          Account="LocalSystem">
+        <util:ServiceConfig
+            FirstFailureActionType="restart"
+            SecondFailureActionType="restart"
+            ThirdFailureActionType="restart"
+            RestartServiceDelayInSeconds="10"
+            ResetPeriodInDays="1" />
+      </ServiceInstall>
+      <ServiceControl Id="ServerServiceControl" Name="UsbDlp.Server" Start="install" Stop="both" Remove="uninstall" Wait="yes" />
+    </Component>
+
+    <Component Id="ServerEnvironmentComponent" Directory="INSTALLFOLDER" Guid="{C2D8295C-1D32-4EB1-AF72-1CE1873955B2}" Bitness="always64">
+      <RegistryValue
+          Id="ServerServiceEnvironment"
+          Root="HKLM"
+          Key="SYSTEM\CurrentControlSet\Services\UsbDlp.Server"
+          Name="Environment"
+          Type="multiString"
+          KeyPath="yes">
+        <MultiStringValue Value="ASPNETCORE_URLS=[LISTENURL]" />
+        <MultiStringValue Value="DOTNET_ENVIRONMENT=Production" />
+        <MultiStringValue Value="UsbDlp__DatabasePath=[DataFolder]usb-dlp.db" />
+        <MultiStringValue Value="UsbDlp__BootstrapAdminUsername=[ADMINUSERNAME]" />
+        <MultiStringValue Value="UsbDlp__BootstrapAdminPasswordFile=[DataFolder]bootstrap-admin-password.txt" />
+        <MultiStringValue Value="UsbDlp__BootstrapEnrollmentTokenFile=[DataFolder]bootstrap-enrollment-token.txt" />
+        <MultiStringValue Value="UsbDlp__AllowInsecureHttp=[ALLOWINSECUREHTTP]" />
+      </RegistryValue>
+    </Component>
+
+    <Component Id="ServerDataComponent" Directory="DataFolder" Guid="{9EAD9B86-9C03-459F-805F-6DB4279C5E46}" Bitness="always64">
+      <CreateFolder>
+        <PermissionEx Sddl="D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)" />
+      </CreateFolder>
+      <RegistryValue
+          Id="ServerDataMarker"
+          Root="HKLM"
+          Key="SOFTWARE\Ruisi\UsbDlpServer"
+          Name="DataDirectory"
+          Type="string"
+          Value="[DataFolder]"
+          KeyPath="yes" />
+    </Component>
+
+    <Component Id="ServerBootstrapComponent" Directory="DataFolder" Guid="{57FBCF4A-61C4-4FA6-9DA9-87C7A361123A}" Bitness="always64" Condition="NOT Installed AND NOT WIX_UPGRADE_DETECTED">
+      <RegistryValue
+          Id="ServerBootstrapMarker"
+          Root="HKLM"
+          Key="SOFTWARE\Ruisi\UsbDlpServer"
+          Name="BootstrapInstalled"
+          Type="integer"
+          Value="1"
+          KeyPath="yes" />
+      <CopyFile Id="CopyAdminPassword" SourceProperty="ADMINPASSWORDFILE" DestinationDirectory="DataFolder" DestinationName="bootstrap-admin-password.txt" />
+      <CopyFile Id="CopyEnrollmentToken" SourceProperty="ENROLLMENTTOKENFILE" DestinationDirectory="DataFolder" DestinationName="bootstrap-enrollment-token.txt" />
+    </Component>
+
+    <Feature Id="AdministrationServer" Title="Ruisi USB DLP Server" Level="1">
+      <ComponentRef Id="ServerServiceComponent" />
+      <ComponentRef Id="ServerEnvironmentComponent" />
+      <ComponentRef Id="ServerDataComponent" />
+      <ComponentRef Id="ServerBootstrapComponent" />
+      <ComponentGroupRef Id="PublishedServerPayload" />
+    </Feature>
+  </Package>
+</Wix>

@@ -4,9 +4,13 @@ using Microsoft.AspNetCore.Localization;
 using System.Globalization;
 using UsbDlp.Contracts;
 using UsbDlp.Policy;
+using UsbDlp.Server;
 using UsbDlp.Server.Data;
 
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
+builder.Services.AddWindowsService(options => options.ServiceName = "Ruisi USB DLP Server");
+BootstrapConfiguration.LoadFileSecrets(builder.Configuration);
+bool allowInsecureHttp = builder.Configuration.GetValue("UsbDlp:AllowInsecureHttp", false);
 builder.Services.ConfigureHttpJsonOptions(options =>
 {
     options.SerializerOptions.PropertyNamingPolicy = PolicyJson.Options.PropertyNamingPolicy;
@@ -26,11 +30,12 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
     options.Cookie.Name = "UsbDlp.Admin";
     options.Cookie.HttpOnly = true;
     options.Cookie.SameSite = SameSiteMode.Lax;
-    options.Cookie.SecurePolicy = builder.Environment.IsDevelopment() ? CookieSecurePolicy.SameAsRequest : CookieSecurePolicy.Always;
+    options.Cookie.SecurePolicy = builder.Environment.IsDevelopment() || allowInsecureHttp ? CookieSecurePolicy.SameAsRequest : CookieSecurePolicy.Always;
     options.ExpireTimeSpan = TimeSpan.FromMinutes(30);
     options.SlidingExpiration = true;
 });
 builder.Services.AddAuthorization();
+builder.Services.AddHealthChecks();
 builder.Services.AddLocalization(options => options.ResourcesPath = "Resources");
 builder.Services.AddSingleton<UsbDlp.Server.SharedResource>();
 builder.Services.AddRazorPages(options => options.Conventions.AuthorizeFolder("/").AllowAnonymousToPage("/Login"));
@@ -42,8 +47,11 @@ await repository.InitializeAsync(builder.Configuration["UsbDlp:BootstrapEnrollme
 if (!app.Environment.IsDevelopment())
 {
     app.UseExceptionHandler("/Error");
-    app.UseHsts();
-    app.UseHttpsRedirection();
+    if (!allowInsecureHttp)
+    {
+        app.UseHsts();
+        app.UseHttpsRedirection();
+    }
 }
 app.Use(async (context, next) =>
 {
@@ -79,7 +87,13 @@ app.Use(async (context, next) =>
 RouteGroupBuilder agentApi = app.MapGroup("/api/v1/agent");
 agentApi.MapPost("/enroll", async (EnrollmentRequest request, UsbDlpRepository store, IConfiguration config, CancellationToken token) =>
 {
-    if (request.SchemaVersion != 1 || request.ClientNonce == Guid.Empty || string.IsNullOrWhiteSpace(request.Hostname) || request.Hostname.Length > 63 || string.IsNullOrWhiteSpace(request.MachineSid))
+    bool validPlatform = request.SchemaVersion == 1 ||
+        request.SchemaVersion == 2 &&
+        request.OsVersion is { Length: >= 1 and <= 64 } && request.OsVersion.All(character => character is >= ' ' and <= '~') &&
+        request.Architecture is "x86" or "x64" &&
+        request.ImplementationProfile is "legacy-xp-x86" or "legacy-win7-x86" or "legacy-win7-x64" or "modern-win10-x86" or "modern-win10-x64" &&
+        (request.ImplementationProfile.EndsWith("-x86", StringComparison.Ordinal) ? request.Architecture == "x86" : request.Architecture == "x64");
+    if (!validPlatform || request.ClientNonce == Guid.Empty || string.IsNullOrWhiteSpace(request.Hostname) || request.Hostname.Length > 63 || string.IsNullOrWhiteSpace(request.MachineSid))
         return Results.ValidationProblem(new Dictionary<string, string[]> { ["request"] = ["Enrollment fields are invalid."] });
     int pollSeconds = config.GetValue("UsbDlp:PolicyPollSeconds", 30);
     (EnrollmentResponse Response, bool Created)? result = await store.EnrollAsync(request, pollSeconds, token);
@@ -206,6 +220,8 @@ app.MapGet("/culture/{culture}", (string culture, string? returnUrl, HttpContext
 }).AllowAnonymous();
 
 app.MapRazorPages();
+app.MapHealthChecks("/health/live").AllowAnonymous();
+app.MapHealthChecks("/health/ready").AllowAnonymous();
 app.Run();
 
 static async Task<AuthenticatedAgent?> AuthenticateAsync(HttpContext context, UsbDlpRepository repository, CancellationToken cancellationToken)

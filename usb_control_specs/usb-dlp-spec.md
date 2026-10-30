@@ -1,6 +1,6 @@
 # USB Device Control - Technical Specification
 
-Version 1.3 - 2026-08-23 - Windows v1 - approximately 300 managed workstations
+Version 1.4 - 2026-08-27 - multi-generation Windows - approximately 300 managed workstations
 
 This document is normative. `MUST`, `MUST NOT`, `SHOULD`, and `MAY` have their RFC 2119
 meanings. The test plan is the acceptance authority. Screenshots under `screenshots/en` and
@@ -26,40 +26,89 @@ Explicit non-goals:
 - resistance to a user with local administrator or SYSTEM privileges;
 - BadUSB, HID spoofing, DMA, network, Bluetooth, optical-media, or cloud DLP protection;
 - file content inspection, classification, encryption, or copy accounting;
-- kernel-mode interception; and
+- kernel-mode interception in the baseline v1 product (the separate XP filter qualification
+  track in section 6.1 is experimental, not a release-qualified exception); and
 - macOS or Linux support in v1.
 
+Windows XP and Windows 7 are compatibility targets because of legacy manufacturing equipment,
+not trusted security foundations. Their end of vendor servicing means the product cannot make the
+host OS secure, prevent a local administrator from bypassing controls, or provide the same
+exploit-resistance as a supported Windows release. Every legacy deployment MUST be isolated,
+explicitly risk-accepted, and visibly identified in the administration console and audit exports.
+
 The system provides attribution and deterrence, not absolute prevention. A user-mode race exists
-between PnP arrival and devnode disable. The target is enforcement within 1 second; copying during
-the race is an accepted residual risk and MUST be stated in deployment documentation.
+between PnP arrival and devnode disable in the user-mode tracks. The target is enforcement within
+1 second; copying during the race is an accepted residual risk and MUST be stated in deployment
+documentation. The experimental XP filter track has a different kernel I/O boundary that requires
+its own boot and physical-I/O qualification.
 
 ## 2. Supported environment
 
-Agent and notifier support x64 Windows 10 Enterprise 22H2 only when covered by Microsoft's active
-Extended Security Updates program, plus Windows 11 Enterprise 23H2, 24H2/LTSC 2024, and 25H2,
-including domain-joined machines. A release MUST be tested on every still-supported version in
-this matrix and MUST drop a version when its Microsoft servicing ends unless an explicit extended
-support contract applies. Windows Home, Windows on ARM, Windows Server as an endpoint, VDI device
-redirection, and multi-user RDS hosts are not release-qualified in v1.
+The release-qualified matrix is:
 
-The server targets .NET 8 and supports Windows Server 2022/2025 or a supported Linux host. SQLite
-is supported for one server instance and up to 500 workstations. PostgreSQL 16 or newer is required
-for multiple server instances or larger deployments. Server clustering is out of scope for v1.
+| OS | Architecture | Agent/notifier | Server | Profile |
+|---|---|---|---|---|
+| Windows XP Professional SP3 | x86 | required | required with legacy-risk mode | `legacy-xp-x86` |
+| Windows 7 SP1 | x86, x64 | required | required with legacy-risk mode | `legacy-win7-x86`, `legacy-win7-x64` |
+| Windows 10 Enterprise 22H2 | x86, x64 | required | required | `modern-win10-x86`, `modern-win10-x64` |
+| Windows 11 Enterprise 23H2 or newer | x64 | required | test/development only | `modern-win11-x64` |
+| Windows Server 2022/2025 | x64 | not an endpoint target | preferred production server | `modern-server-x64` |
+
+XP means 32-bit Windows XP Professional SP3 only. XP x64, pre-SP3 XP, Windows 7 without SP1,
+Windows Home, Windows on ARM, VDI device redirection, and multi-user RDS endpoints are excluded.
+The installer MUST reject an OS/architecture outside its exact profile. Windows 10 is supported
+only while covered by Microsoft servicing or an applicable ESU contract. XP and Windows 7 require
+a customer legacy-support agreement, an isolated management network, documented compensating
+controls, and quarterly risk review; they are never described as vendor-supported operating
+systems.
+
+Modern servers use .NET 8 and support SQLite for one instance and up to 500 workstations;
+PostgreSQL 16 or newer remains required for larger or multi-instance deployments. Legacy servers
+use the native compatibility implementation and SQLite only, are limited to one instance and 100
+workstations, and MUST NOT join a cluster. A modern server remains the preferred design even when
+legacy agents are present.
 
 ## 3. Architecture and solution layout
 
 ```text
-Workstation
-  UsbDlp.Agent       Windows Service, .NET 8, LocalSystem
+Modern workstation
+  UsbDlp.Agent       Windows Service, .NET 8, LocalSystem, x86/x64
     DeviceMonitor -> PolicyEvaluator -> Enforcer
     SyncClient | PolicyCache | EventQueue | NotifierPipeServer
   UsbDlp.Notifier    on-demand per-session WPF companion, .NET 8
              | HTTPS/TLS, certificate pins, per-agent credential
              v
-Server
+Modern server
   UsbDlp.Server      ASP.NET Core 8
     Agent REST API | Razor Pages admin UI | PolicyCompiler | EF Core
 ```
+
+Legacy XP/Windows 7 uses a parallel native Win32 implementation because no supported .NET runtime
+spans the full matrix:
+
+```text
+Legacy workstation
+  UsbDlp.LegacyAgent       native Win32 service, LocalSystem
+  UsbDlp.LegacyNotifier    on-demand native Win32 per-session UI
+       SetupAPI/CfgMgr32 adapter | policy cache | event queue | portable TLS
+  RuisiUsbDlpFilter.sys    optional XP-only experimental USBSTOR disk upper filter
+                              | canonical /api/v1 JSON
+Legacy server
+  UsbDlp.LegacyServer      native Win32 service
+       HTTP/API host | portable TLS | SQLite | embedded static admin assets
+```
+
+The legacy implementation MUST NOT load the CLR. It uses only APIs available on its declared
+minimum OS, a statically linked runtime, UTF-8 internally, and explicit x86/x64 builds. The modern
+and legacy implementations share generated JSON schemas, canonical policy test vectors, database
+migration fixtures, localization source, and API conformance tests. They do not share binary
+assemblies. Any different decision, normalized identity, authorization result, or wire response
+for the same conformance vector is a release blocker.
+
+The full administration web UI may be served by a legacy server but MUST be used from a separately
+maintained modern browser. Installing an obsolete browser engine on XP/Windows 7 is prohibited.
+The legacy server provides a local command-line recovery tool for health, backup, certificate,
+password and token operations when no browser is reachable.
 
 One `UsbDlp.sln` MUST contain:
 
@@ -70,6 +119,11 @@ One `UsbDlp.sln` MUST contain:
 - `UsbDlp.Server` (`net8.0`): API, compiler, persistence and Razor Pages UI;
 - `UsbDlp.Cli` (`net8.0-windows`): diagnostics and dry-run harnesses; and
 - `UsbDlp.Tests` plus `UsbDlp.IntegrationTests` (`net8.0`).
+
+Legacy source is isolated under `legacy/` and produces `UsbDlp.LegacyAgent`,
+`UsbDlp.LegacyNotifier`, `UsbDlp.LegacyServer`, `UsbDlp.LegacyAdmin`, and native contract tests.
+No legacy compatibility change may lower warnings, crypto, authentication, or validation in the
+modern projects.
 
 Production projects MUST enable nullable reference types and treat compiler warnings as errors.
 
@@ -98,12 +152,24 @@ The generic Disk setup class `{4d36e967-e325-11ce-bfc1-08002be10318}` MUST NOT b
 device in scope and MUST NEVER be written as a denied setup class. This prevents internal disks
 from being affected.
 
+Identity enrichment is not an admission condition. Once a devnode is safely identified as an
+in-scope `USBSTOR` disk or WPD transfer device, a temporarily unavailable VID, PID, serial number,
+friendly name, or USB-parent property MUST NOT cause the monitor to discard it. The agent evaluates
+the available identity fields, applies the workstation default when no entry matches, and records
+missing fields as `unknown` in diagnostics. In particular, default-deny remains fail-closed during
+the incomplete Plug and Play metadata window observed on Windows XP.
+
 ### 4.2 Hard-coded safety allowlist
 
 The agent MUST never disable a devnode in, or an ancestor required by, these categories: keyboard,
 mouse, HID, smart-card reader, printer, USB host controller, USB hub, audio, Bluetooth, network,
 system, and camera/webcam. The implementation MUST use both setup-class checks and ancestry checks;
 policy cannot override this list. `Image` and `Camera` setup classes are always allowed in v1.
+
+A safety-class ancestor of a governed storage disk does not exempt the disk: every USB storage
+device is downstream of a hub/controller. Ancestry is used to identify the bus and to ensure
+the selected enforcement target is the disk rather than a shared parent. The agent MUST NOT
+select a `USB\\VID_*` parent merely because its service is `USBSTOR`.
 
 The exact GUID table MUST live in a named, unit-tested `HardCodedSafetyAllowList`; each GUID MUST
 have a source comment and friendly category name. Unknown classes are not safety-allowed merely
@@ -261,10 +327,52 @@ reinsertion resets the OS disable, after which the current policy is evaluated a
 must be disabled, the agent MUST first prove it is in scope and not safety-allowed. Each OS result
 code is logged, including the Configuration Manager result code on failure.
 
+For isolated XP SP3 x86 qualification, two **separate, non-production** enforcement tracks
+replace the USBSTOR part of that call path. They MUST NOT be installed together. The SetupAPI
+track applies `DIF_PROPERTYCHANGE` with `DICS_DISABLE` or `DICS_ENABLE` and
+`DICS_FLAG_GLOBAL` to the exact USBSTOR disk instance ID. It logs the class-installer result,
+reboot requirement, `CM_Get_DevNode_Status` flags and problem code. A successful installer call
+is not proof of denial: only `DN_HAS_PROBLEM` with `CM_PROB_DISABLED` may be reported as
+`blocked_verified`. Agent-owned disabled IDs and their policy identities persist in the
+ACL-protected state store so a restart can re-enable a device after approval. A replugged ID is
+re-evaluated on every local poll. Windows may require a replug for volume remounting.
+
+The XP filter track registers a demand-start disk-class upper filter, but its `AddDevice` MUST
+attach only when the PDO enumerator is `USBSTOR`, leaving internal disks and other device classes
+untouched. A newly attached USBSTOR disk is denied by default in the driver before the agent
+grants it. The LocalSystem agent resolves the exact disk PDO name from the canonical instance ID
+and uses a SYSTEM/Administrators-only control device to set or query its grant. The driver denies
+disk I/O while ungranted and removes the grant with the attachment; an `allow` policy evaluation
+explicitly grants that device, including if it was already denied before agent startup. Revocation
+removes the grant. No grant is inferred from a missing driver or an unmatched PDO. The notifier
+and audit log MUST say `enforce_unverified` rather than claiming a block in those cases. This
+track does not replace the WPD enforcement path and requires XP hardware validation of every
+volume and I/O path before any security claim. The installation helper preserves other disk-class
+`UpperFilters` entries, and rollback unregisters only its own filter and requires a reboot.
+
+XP qualification finding (2026-10-19): the 1.1.6 SetupAPI test left a usable access interval
+after manual re-enable in Device Manager; a later `blocked_verified` only proves the state at
+that instant and cannot undo reads already made. The 1.1.7 filter log showed no verified block:
+every filter request failed with result 2. Result 2 is ambiguous without the operation stage
+(Win32 `ERROR_FILE_NOT_FOUND` versus Configuration Manager `CR_OUT_OF_MEMORY`). Neither build
+is release-qualified. The diagnostic successor logs the failure stage (`locate_devnode`,
+`read_pdo_name`, `open_filter_control`, `filter_ioctl`, or `device_not_attached`) and supplies a
+post-reboot check of the driver file, service, disk-class registration, control channel, and
+attached USB disk count. A healthy control channel is only a prerequisite for physical I/O tests,
+not proof of blocking. Until those tests pass on XP, this track remains experimental.
+
 The agent records ownership only after a successful disable. It may call `CM_Enable_DevNode` only
 for that exact agent-owned instance ID and MUST never enable a device disabled by an administrator,
 another product, policy, or Windows. A successful enable clears ownership. Physical removal clears
-service-lifetime ownership because a later instance is a new enforcement cycle.
+service-lifetime ownership in the default Config Manager track because a later instance is a new
+enforcement cycle. The SetupAPI track instead persists only agent-owned disabled IDs until verified
+re-enable; the filter track stores no OS devnode-disable ownership for USBSTOR because its grant
+state is held per attachment in the driver.
+
+XP test-track rollback MUST stop and wait for the agent service before changing ownership state.
+It restores only recorded agent-owned disabled IDs and refuses agent removal if any such device
+cannot be verified or re-enabled; the tester reconnects those devices and retries. Filter-track
+rollback removes only its own disk-class `UpperFilters` entry and service, then requires a reboot.
 
 Enforcement is serialized per canonical instance ID. An unchanged `allow` result may be cached.
 An unchanged `block` result MUST NOT be trusted from cache alone: on every local reconciliation the
@@ -323,6 +431,19 @@ Residual limitation: a previously installed device that the active agent has nev
 remain usable during the service outage. This accepted user-mode limitation MUST appear in the
 threat model, deployment guide, and release notes.
 
+On Windows 7, the OS adapter MUST capability-test layered Device Installation Restrictions before
+claiming a passive backstop. On XP, the layered allow-over-deny policy is unavailable and the
+legacy agent MUST NOT emulate it with class-wide registry deletion. The default XP user-mode
+profile therefore uses active per-devnode enforcement plus SCM automatic recovery. An optional machine-wide `USBSTOR` disabled
+baseline may be selected only for workstations that never need an approved mass-storage device.
+For normal per-device approval, an XP service outage creates a documented fail-open reattachment
+window. The console MUST display `legacy_backstop_unavailable`; health and audit data MUST never
+report the default XP user-mode profile as fully fail-closed. The experimental filter track
+denies **new** USBSTOR attachments while the service is down, but a grant already issued for an
+attached disk remains until detach or the service revokes it. It MUST NOT be reported as fully
+fail-closed, and its class-wide installation risk requires a recoverable lab image and a completed
+XP boot, removal, and physical-I/O test matrix before deployment.
+
 ### 6.3 Dry run and safety interlock
 
 `dryRun` defaults to true in developer packages and false only in signed production MSI builds.
@@ -335,14 +456,31 @@ variables survive Windows elevation. The CLI requires an explicit
 
 ## 7. Agent lifecycle, storage, and synchronization
 
-Agent files reside under `%ProgramData%\UsbDlp`. The directory grants full control to SYSTEM and
-Administrators only and has inheritance disabled. Users receive no access.
+Agent files reside under the Windows Common Application Data known folder in `UsbDlp`. Installers
+and binaries resolve it through Windows Installer/`SHGetFolderPath`, not an assumed environment
+variable. This is normally `%ProgramData%\UsbDlp` on modern Windows and
+`C:\Documents and Settings\All Users\Application Data\UsbDlp` on XP. The directory grants full
+control to SYSTEM and Administrators only and has inheritance disabled. Users receive no access.
+On XP, the installer MUST use an XP-compatible SDDL body without the newer protected-DACL string
+token, then disable inheritance with `SetNamedSecurityInfo` and
+`PROTECTED_DACL_SECURITY_INFORMATION`. The data volume MUST preserve ACLs (normally NTFS); FAT and
+FAT32 installation fails closed with the resolved path, failed operation and native error code.
+Legacy wrappers MUST NOT parse localized `reg.exe` output or write path-bearing configuration with
+`echo`. They pass quoted input arguments to the native executable, which resolves Common AppData
+with `SHGetFolderPathW`, copies files with wide-character APIs, and atomically writes UTF-16LE INI
+files. Installation paths containing spaces or characters representable by Windows Unicode,
+including Chinese characters, are supported end to end.
 
 - `agent.json`: non-secret configuration, UTF-8 JSON;
 - `secrets.dat`: DPAPI LocalMachine-protected API credential and enrollment token;
 - `policy.dat`: DPAPI LocalMachine-protected last valid policy;
 - `events.db`: SQLite queue and enforcement ownership state; and
 - `agent.log`: rolling structured log, 10 x 20 MiB by default.
+
+Modern profiles use DPAPI LocalMachine as described above. Legacy profiles use DPAPI where the
+required operation is available and additionally authenticate every persisted policy with an
+agent-specific HMAC key. The legacy implementation MUST run only on NTFS, reject writable ACLs for
+ordinary users, and fail closed when credential, policy, or queue integrity validation fails.
 
 `agent.json` contains server URL, one or more certificate pins, poll interval, log level, dry-run,
 UI culture override, IT contact text, and external-policy mode. Secrets MUST never be logged or
@@ -372,13 +510,21 @@ at least seven offline days at 10,000 events/day.
 
 ## 8. Notifier and IPC
 
-The WPF notifier is a separate process only because Windows services cannot safely display UI in
-an interactive user session. It is logically part of the agent experience, has no policy or
+The modern WPF notifier and legacy native Win32 notifier are separate processes only because
+Windows services cannot safely display UI in an interactive user session. Each is logically part
+of the agent experience, has no policy or
 enforcement authority, and is single-instance per Windows session. It MUST NOT show an idle
 "waiting for a device" window and need not run continuously. The agent launches it on demand when
 a blocked device is observed. If the user closes or terminates it, the agent launches it again for
 the next blocked insertion. The process starts hidden, connects to the pipe, and shows a window
 only after receiving a current blocked-device message.
+
+On Vista and later, the legacy agent capability-loads `WTSQueryUserToken` to launch the notifier
+in the active console session. The XP binary MUST NOT statically import that Vista-only API. On XP,
+LocalSystem enumerates `explorer.exe`, accepts only a process whose session ID equals the active
+console session, opens it with query-only process access, duplicates its user token, and launches
+the notifier on `winsta0\default`. Failure to obtain a matching token is logged and leaves
+enforcement active; the service MUST NOT launch UI in session 0 or under LocalSystem identity.
 
 The service hosts multiple instances of `\\.\pipe\UsbDlpNotify` in message mode. The pipe ACL
 permits SYSTEM full control and Authenticated Users connect/read/write. On connection, the service
@@ -428,12 +574,14 @@ on the first successful policy/local reconciliation and blocks it again on every
 
 ## 9. Server data model
 
-All IDs are UUIDs. All timestamps are UTC. EF concurrency tokens protect mutable entities.
+All IDs are UUIDs. All timestamps are UTC. Optimistic concurrency tokens protect mutable entities
+in both persistence implementations.
 
 - `Group`: id, unique name, mode, created/updated timestamps.
 - `Workstation`: id, unique machine SID, hostname, group ID, API-key salt/hash, key version,
-  agent version, administrator description, last seen, applied policy version, enrollment and
-  revoked timestamps. Hostname, machine SID and description have normalized searchable columns.
+  agent version, OS version, architecture, implementation profile, legacy-risk state,
+  administrator description, last seen, applied policy version, enrollment and revoked timestamps.
+  Hostname, machine SID and description have normalized searchable columns.
 - `UsbDevice`: id, identity kind (`serial` or `workstation_instance`), identity confidence
   (`strong` or `local`), normalized identity hash, VID, PID, nullable serial, friendly name,
   manufacturer, model, description, class/transport/capabilities, first-seen, last-seen and
@@ -504,8 +652,9 @@ on error with `traceId`. Request correlation uses `X-Correlation-ID`. Server tim
 
 Enrollment:
 
-- `POST /agent/enroll`, max 16 KiB, accepts token, hostname, machine SID, agent version and a
-  client nonce. A valid request creates or re-enrolls the same non-revoked machine and returns
+- `POST /agent/enroll`, max 16 KiB, accepts token, hostname, machine SID, agent version, platform
+  profile and a client nonce. Enrollment schema 1 remains accepted for migration; schema 2 requires
+  the platform fields. A valid request creates or re-enrolls the same non-revoked machine and returns
   workstation ID, credential, server UTC and policy poll interval. Re-enrollment rotates and
   invalidates the prior key. The nonce is idempotent for 10 minutes.
 - Credentials use `<workstation-uuid>.<base64url-32-random-bytes>`. The UUID locates the row; only
@@ -528,6 +677,12 @@ per minute:
 Agent timestamps more than 24 hours in the future are rejected; older timestamps are accepted and
 preserved. Hostname is 1-63 characters; usernames 1-256; friendly names 0-200. APIs never accept
 scope IDs not belonging to the authenticated workstation context.
+
+Enrollment records `osVersion`, `architecture`, and `implementationProfile`. The server validates
+the declared profile against later heartbeats and exposes legacy status in inventory. Modern and
+legacy server implementations MUST pass the same black-box API conformance suite. A database may
+move from a legacy server to a same-or-newer modern schema through the documented migration tool;
+moving a modern database backward into a legacy server is prohibited.
 
 ## 11. Policy publication and rollback
 
@@ -627,6 +782,15 @@ PDF generation is out of scope. Monthly SEMI E187-oriented reporting is produced
 Logs MUST redact API keys, enrollment tokens, passwords, cookies and justification text by default.
 Justification remains available only in the authorized Requests and audit views.
 
+The agent supports an administrator-controlled `DebugLog` option, disabled by default in production
+and enabled in external qualification packages. Diagnostic mode records configuration state without
+secret values, USB candidate enumeration and exclusion reasons, available canonical identifiers,
+policy decisions, Config Manager status/result codes, disable attempts and post-action verification,
+and enrollment/policy/heartbeat failures. It MUST NOT record enrollment-token, API-key, password,
+cookie, or request-justification contents. Local diagnostic logs rotate at 5 MiB and retain one
+previous file. Repeated polling MUST log state transitions rather than duplicate unchanged device
+inventory on every cycle.
+
 ## 14. Transport and application security
 
 TLS 1.2 or newer is required. The agent validates normal certificate chain and hostname first, then
@@ -634,21 +798,104 @@ requires the leaf or SPKI SHA-256 to match one of 1-3 configured pins. Pin updat
 deploy old+new pins before certificate rotation, rotate certificate, then remove the old pin.
 Pin failure never falls back to insecure TLS.
 
-Server limits headers to 32 KiB, applies endpoint body limits, uses EF parameterization, security
-headers and anti-forgery. Secrets come from protected configuration/environment providers. Database
+Modern profiles use the .NET/Kestrel TLS implementation and Windows certificate validation.
+Legacy profiles MUST use a vendored portable TLS implementation rather than XP/Windows 7 SChannel.
+It MUST support TLS 1.2, authenticated encryption, SNI, hostname validation, a package-owned CA
+bundle, SPKI SHA-256 pinning, secure renegotiation behavior, and cryptographically secure random
+generation. SSLv2, SSLv3, TLS 1.0/1.1, RC4, 3DES, static RSA key exchange, compression and insecure
+fallback are prohibited. The dependency must have a documented patch owner, reproducible source
+build, software-bill-of-materials entry, vulnerability monitoring, and a successful current CVE
+review at every release. If a current critical fix cannot be built and tested for XP/Windows 7,
+the affected legacy release MUST be blocked rather than shipped with an old TLS library.
+
+An XP or Windows 7 server MUST bind its management/API listener only to an explicitly configured
+interface, default to loopback, and be placed behind an allowlisted firewall or modern reverse
+proxy. Installation requires `ACCEPT_LEGACY_SERVER_RISK=YES`, records the acceptance in local and
+server audit logs, and displays a persistent warning banner. Legacy server administration from a
+browser on the same legacy OS is unsupported; use a current browser on a managed workstation.
+
+Server limits headers to 32 KiB, applies endpoint body limits, uses parameterized SQL/prepared
+statements, security headers and anti-forgery. Secrets come from protected configuration or
+protected-file providers. Database
 backups are encrypted, restored quarterly in a test environment, and retained per customer policy.
 Dependency and package vulnerability scanning runs in CI and release builds.
 
-Agent, notifier, CLI and MSI are Authenticode-signed. The service ACL permits start/query to normal
-users only if customer policy requires it; stop/change/config/delete are Administrators/SYSTEM.
+Agent, notifier, CLI and MSI are Authenticode-signed where the target OS can validate the selected
+signature. Legacy packages include a signed SHA-256 release manifest verified by the installation
+wrapper before MSI execution. No SHA-1-only signature is considered a security guarantee. The
+service ACL permits start/query to normal users only if customer policy requires it;
+stop/change/config/delete are Administrators/SYSTEM.
 SCM recovery restarts after 5, 15 and 60 seconds, then every 5 minutes, resetting after one day.
 
 ## 15. Deployment, upgrade, and removal
 
-WiX v4 MSI supports silent GPO/Intune/SCCM deployment, per-machine installation and major upgrades.
+WiX v4 MSI supports modern silent GPO/Intune/SCCM deployment, per-machine installation and major upgrades.
 Configuration validates HTTPS URL and pin format before service start. Upgrade preserves identity,
 policy, queue and ownership state and supports one-version rollback. Schema migrations are
 transactional and backed up before migration.
+
+Legacy packages use an XP-compatible MSI toolchain and Windows Installer schema, contain no
+managed custom actions or bootstrapper prerequisite downloads, and are built separately for x86
+and x64. The complete package matrix is agent/server pairs for XP SP3 x86, Windows 7 SP1 x86,
+Windows 7 SP1 x64, Windows 10 x86, and Windows 10 x64. Each MSI has a distinct architecture/profile
+identity and launch condition. Windows 11 x64 and Windows Server x64 reuse the modern x64 line.
+
+For each workstation/server profile, release automation creates one restricted ZIP deployment kit:
+
+```text
+RuisiUsbDlp-<profile>-<version>/
+  config/deployment.ini
+  config/enrollment-token.txt
+  config/admin-password.txt
+  client/RuisiUsbDlpAgent-<profile>.msi
+  client/install-client.cmd
+  server/RuisiUsbDlpServer-<profile>.msi
+  server/install-server.cmd
+  SHA256SUMS
+```
+
+There are two MSIs because server and workstation lifecycles remain independent. The `.cmd`
+scripts use only command facilities present on the target OS; PowerShell wrappers MAY also be
+included on modern profiles. `deployment.ini` contains editable non-secret server URL, listener,
+admin username and profile settings. The two secret files contain exactly one UTF-8/ASCII line and
+are byte-identical across kits produced for the same controlled deployment. The administrator MUST
+replace the example password before installation. Release kits containing secrets are encrypted or
+distributed through an access-controlled software channel and MUST NOT be published as ordinary
+download artifacts.
+
+`install-client.cmd` passes secret file paths, never secret values, selects the exact package
+profile, and installs with `DRYRUN=false` and `DEFAULTPOLICY=deny`. `install-server.cmd` reads the
+same configuration, requires explicit legacy risk acceptance on XP/Windows 7, and imports the
+administrator password and enrollment token through protected files. Both scripts stop before MSI
+execution for placeholders, missing files, wrong architecture, non-NTFS state, invalid lengths or
+an unsafe server URL. MSI logs and process command lines MUST contain no password or token value.
+
+The workstation and server are separate packages with distinct product/upgrade identities,
+install directories, services and ProgramData roots. The workstation MSI MUST NOT contain or start
+the administration server. The server MSI MUST NOT install the workstation agent, notifier, CLI,
+device-control policy or enforcement backstop. Installing, upgrading or removing either product
+MUST NOT modify the other product.
+
+The modern server MSI installs the self-contained ASP.NET Core application and the legacy server
+MSIs install the native compatibility application, each as the auto-start LocalSystem service
+`UsbDlp.Server` with SCM recovery enabled. Binaries are installed under Program Files;
+the SQLite database and bootstrap material are stored under an Administrators/SYSTEM-only
+`Ruisi\UsbDlpServer` directory beneath the Windows Common Application Data known folder.
+Administrator passwords and enrollment tokens MUST
+be supplied through protected source files and MUST NOT be passed as MSI property values or written
+to MSI logs. The installer copies those files into the protected data directory before service
+start. A fresh installation fails before mutation when either source file is absent. The supported
+installation wrapper additionally rejects empty input, an administrator password shorter than 14
+characters, or an enrollment token shorter than 32 characters before invoking Windows Installer.
+
+The development server package listens on `http://127.0.0.1:5091` by default and marks insecure
+HTTP explicitly. A non-loopback listener and Domain/Private firewall exception require an explicit
+operator choice. Production deployments MUST use HTTPS with an enterprise certificate, either at
+Kestrel or a trusted reverse proxy; no installer option may silently downgrade HTTPS. Server major
+upgrade preserves the database and protected configuration without requiring the original staging
+files. Uninstall removes the service, binaries and installer-created firewall rule, but preserves
+the database, audit state and protected server configuration by default; a separate explicit purge
+operation may remove the complete data directory.
 
 Uninstall removes binaries, service, notifier launch support and agent-owned registry policy. ProgramData is
 preserved by default for audit/reinstall; explicit `PURGEDATA=1` removes it after stopping service
@@ -673,8 +920,10 @@ runbooks.
    unaffected.
 6. A blocked multi-volume USB disk exposes no usable partition or drive letter. After agent restart,
    current policy is reconciled; after stopping the service, a newly inserted unapproved device is
-   denied by the installation backstop. External enterprise policy remains byte-for-byte unchanged.
-   A preinstalled never-evaluated device is documented as the accepted residual case.
+   denied by the installation backstop on profiles that report that capability. XP instead reports
+   `legacy_backstop_unavailable` and is tested against the documented service-down limitation.
+   External enterprise policy remains byte-for-byte unchanged. A preinstalled never-evaluated
+   device is documented as the accepted residual case.
 7. Admin and notifier workflows are complete in en-US and zh-CN, match the supplied visual system,
    and pass keyboard, DPI, zoom and resource-parity checks.
 8. Policy evaluation is deterministic and has at least 95% branch coverage, including every scope,
@@ -687,3 +936,7 @@ runbooks.
     JSON; device/workstation detail reports every observed pair with accurate effective policy,
     observed enforcement and freshness. Direct pair grants and revocations converge through normal
     policy publication and are fully audited.
+12. Every release-qualified XP, Windows 7 and Windows 10 OS/architecture profile passes its native
+    install, server, agent, notifier, enforcement, API, TLS, upgrade and removal gates. Cross-profile
+    policy decisions and API behavior are conformant, and every legacy limitation/risk state is
+    visible rather than represented as equivalent to a modern supported host.

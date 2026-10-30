@@ -8,7 +8,10 @@ public sealed record EnrollmentRequest(
     string Hostname,
     string MachineSid,
     string AgentVersion,
-    Guid ClientNonce);
+    Guid ClientNonce,
+    string? OsVersion = null,
+    string? Architecture = null,
+    string? ImplementationProfile = null);
 
 public sealed record EnrollmentResponse(
     int SchemaVersion,

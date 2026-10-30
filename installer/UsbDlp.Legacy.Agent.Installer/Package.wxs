@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+      Name="$(var.ProductName)"
+      Manufacturer="Ruisi"
+      Version="$(var.ProductVersion)"
+      UpgradeCode="$(var.ProductUpgradeCode)"
+      Scope="perMachine"
+      InstallerVersion="300"
+      Compressed="yes">
+<?if $(var.TargetProfile) = xp ?>
+    <SummaryInformation Description="Ruisi native USB control agent for Windows XP SP3 x86" />
+<?elseif $(var.TargetProfile) = win10 ?>
+    <SummaryInformation Description="Ruisi native USB control agent for Windows 10" />
+<?else?>
+    <SummaryInformation Description="Ruisi native USB control agent for Windows 7 SP1" />
+<?endif?>
+    <MediaTemplate EmbedCab="yes" />
+    <MajorUpgrade DowngradeErrorMessage="A newer Ruisi USB DLP Legacy Agent is already installed." />
+    <Property Id="ARPNOREPAIR" Value="1" />
+<?if $(var.TargetProfile) = xp ?>
+    <Launch Condition="VersionNT = 501 AND ServicePackLevel &gt;= 3" Message="This package requires 32-bit Windows XP SP3." />
+<?elseif $(var.TargetProfile) = win10 ?>
+    <Launch Condition="VersionNT = 1000 AND WindowsBuild &gt;= 10240 AND WindowsBuild &lt; 22000" Message="This package requires Windows 10." />
+<?else?>
+    <Launch Condition="VersionNT = 601 AND ServicePackLevel &gt;= 1" Message="This package requires Windows 7 SP1." />
+<?endif?>
+
+    <StandardDirectory Id="$(var.ProgramFilesId)">
+      <Directory Id="INSTALLFOLDER" Name="Ruisi USB DLP Legacy" />
+    </StandardDirectory>
+
+    <Component Id="AgentComponent" Directory="INSTALLFOLDER" Guid="*" Bitness="$(var.ComponentBitness)">
+      <File Id="AgentExe" Source="$(var.PayloadDir)\UsbDlp.LegacyAgent.exe" KeyPath="yes" />
+      <ServiceInstall
+          Id="AgentServiceInstall"
+          Name="UsbDlp.LegacyAgent"
+          DisplayName="Ruisi USB DLP Legacy Agent"
+          Description="Native USB device-control agent"
+          Type="ownProcess"
+          Start="auto"
+          ErrorControl="normal"
+          Account="LocalSystem" />
+      <ServiceControl Id="AgentServiceControl" Name="UsbDlp.LegacyAgent" Stop="both" Remove="uninstall" Wait="yes" />
+    </Component>
+
+    <Component Id="NotifierComponent" Directory="INSTALLFOLDER" Guid="*" Bitness="$(var.ComponentBitness)">
+      <File Id="NotifierExe" Source="$(var.PayloadDir)\UsbDlp.LegacyNotifier.exe" KeyPath="yes" />
+    </Component>
+
+    <Feature Id="Agent" Title="Ruisi USB DLP Legacy Agent" Level="1">
+      <ComponentRef Id="AgentComponent" />
+      <ComponentRef Id="NotifierComponent" />
+    </Feature>
+  </Package>
+</Wix>

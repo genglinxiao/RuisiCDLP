@@ -1,0 +1,36 @@
+<Project Sdk="WixToolset.Sdk/4.0.6">
+  <PropertyGroup>
+    <OutputType>Package</OutputType>
+    <Platform>x64</Platform>
+    <InstallerPlatform>x64</InstallerPlatform>
+    <OutputName>RuisiUsbDlpServer-1.1.0-x64</OutputName>
+    <PayloadRoot>$(BaseIntermediateOutputPath)payload</PayloadRoot>
+    <ManualPayloadRoot>$(BaseIntermediateOutputPath)manual</ManualPayloadRoot>
+    <DefineConstants>ServerExe=$(ManualPayloadRoot)\UsbDlp.Server.exe;PayloadRoot=$(PayloadRoot)</DefineConstants>
+    <HarvestAutogenerateGuids>true</HarvestAutogenerateGuids>
+    <HarvestDirectorySuppressRegistry>true</HarvestDirectorySuppressRegistry>
+    <HarvestDirectorySuppressCom>true</HarvestDirectorySuppressCom>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="WixToolset.Heat" Version="4.0.6" PrivateAssets="all" />
+    <PackageReference Include="WixToolset.Util.wixext" Version="4.0.6" PrivateAssets="all" />
+    <HarvestDirectory Include="$(PayloadRoot)">
+      <ComponentGroupName>PublishedServerPayload</ComponentGroupName>
+      <DirectoryRefId>INSTALLFOLDER</DirectoryRefId>
+      <SuppressRootDirectory>true</SuppressRootDirectory>
+      <SuppressCom>true</SuppressCom>
+      <SuppressRegistry>true</SuppressRegistry>
+      <PreprocessorVariable>var.PayloadRoot</PreprocessorVariable>
+    </HarvestDirectory>
+    <BindPath Include="$(PayloadRoot)" BindName="PayloadRoot" />
+  </ItemGroup>
+
+  <Target Name="PublishServerPayload" BeforeTargets="BeforeBuild">
+    <RemoveDir Directories="$(PayloadRoot);$(ManualPayloadRoot)" />
+    <MakeDir Directories="$(PayloadRoot);$(ManualPayloadRoot)" />
+    <Exec Command="dotnet publish &quot;$(MSBuildThisFileDirectory)..\..\src\UsbDlp.Server\UsbDlp.Server.csproj&quot; -c Release -r win-x64 --self-contained true -o &quot;$(PayloadRoot)&quot; -p:DebugType=None -p:DebugSymbols=false" />
+    <Copy SourceFiles="$(PayloadRoot)\UsbDlp.Server.exe" DestinationFolder="$(ManualPayloadRoot)" />
+    <Delete Files="$(PayloadRoot)\UsbDlp.Server.exe" />
+  </Target>
+</Project>

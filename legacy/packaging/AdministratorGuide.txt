@@ -1,0 +1,49 @@
+RUISI USB DLP LEGACY COMPATIBILITY BUILD 1.1.0
+
+IMPORTANT
+This package is an UNVERIFIED compatibility build. It must pass the VM qualification
+matrix in usb_control_specs/usb-dlp-test-plan.md before production deployment.
+The current transport is HTTP and is permitted only on an isolated test network.
+The Windows XP package requires 32-bit Windows XP Professional SP3 on NTFS. XP x64
+and pre-SP3 systems are not supported. The XP package intentionally refuses to install
+on newer Windows versions; use the matching Windows 7 or Windows 10 kit instead.
+
+PREPARE
+1. Replace config\enrollment-token.txt with one random value of at least 32 characters.
+   Use the same file on the server and every client that the server may enroll.
+2. Replace config\admin-password.txt with a unique password of at least 14 characters.
+3. Set ServerUrl and Port in config\deployment.ini.
+
+INSTALL
+Run server\install-server.cmd as Administrator on the server.
+Run client\install-client.cmd as Administrator on each workstation.
+The client script writes DryRun=0. Until enrollment and an allow policy arrive, USB
+storage is evaluated as default deny.
+
+LOCAL SERVER ADMINISTRATION
+Open an Administrator command prompt in the kit's server directory. Use the
+wrapper so the running service reloads each persisted decision immediately.
+
+admin-server.cmd --requests
+admin-server.cmd --workstations [optional-search-text]
+admin-server.cmd --approve REQUEST_ID 30
+admin-server.cmd --deny REQUEST_ID
+admin-server.cmd --revoke REQUEST_ID
+
+The wrapper briefly stops the legacy server, applies the command to encrypted
+state, and restarts the service. Run it only from an elevated prompt.
+
+REMOTE ADMIN API
+The username is admin and the password is the content of config\admin-password.txt.
+
+GET  /api/v1/admin/requests
+GET  /api/v1/admin/workstations
+POST /api/v1/admin/requests/{id}/approve   body: {"durationDays":30}
+POST /api/v1/admin/requests/{id}/deny      body: {}
+POST /api/v1/admin/requests/{id}/revoke    body: {}
+
+All remote admin calls use HTTP Basic authentication in this compatibility build.
+Do not expose the server port outside the isolated test network.
+
+See docs\Ruisi-USB-DLP-XP-Tester-Manual.pdf for the full XP handoff procedure,
+acceptance checklist, known limitations, and diagnostic collection instructions.

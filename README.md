@@ -4,6 +4,12 @@ Windows-first USB device control with a central ASP.NET Core administration serv
 service agent, a per-user WPF notifier, and a safety-interlocked diagnostic CLI. The normative
 contracts are in `usb_control_specs`.
 
+> Compatibility status: native Windows XP SP3 x86, Windows 7 SP1 x86/x64, and Windows 10
+> x86/x64 agent/server binaries and restricted deployment kits can be built from `legacy/`.
+> Native tests pass on the Windows 11 build host, but the packages remain `UNVERIFIED` until the
+> isolated VM and hardware qualification matrix in the test plan is complete. Do not use the
+> modern x64 MSI on XP or Windows 7.
+
 ## Fast end-to-end demo
 
 Prerequisites: Windows 10/11 and the .NET 8 SDK. From an ordinary PowerShell prompt:
@@ -43,6 +49,44 @@ powershell -ExecutionPolicy Bypass -File scripts\start-server.ps1 `
 For a production-like deployment, terminate TLS at ASP.NET Core or a trusted reverse proxy, set
 the `UsbDlp__*` settings in the service environment, protect the SQLite path, and rotate the
 bootstrap enrollment token after rollout. HTTP is provided only for the loopback demo.
+
+## Build and install the server MSI
+
+The server has its own x64 package. It does not contain the workstation agent, notifier, or CLI,
+and the workstation MSI does not contain the server:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\build-server-installer.ps1
+```
+
+Output: `artifacts\installer\RuisiUsbDlpServer-1.1.0-x64.msi`. Create separate ACL-protected
+files containing a 14+ character administrator password and a 32+ character enrollment token,
+then install from an elevated prompt:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\install-server-package.ps1 `
+  -AdminPasswordFile "C:\SecureStaging\admin-password.txt" `
+  -EnrollmentTokenFile "C:\SecureStaging\enrollment-token.txt"
+```
+
+This installs the auto-start `UsbDlp.Server` Windows service and listens only on
+`http://127.0.0.1:5091`. Server state is ACL-protected under
+`%ProgramData%\Ruisi\UsbDlpServer`. For an isolated LAN test, explicitly select a non-loopback
+listener and firewall access; production deployments should use HTTPS instead:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\install-server-package.ps1 `
+  -AdminPasswordFile "C:\SecureStaging\admin-password.txt" `
+  -EnrollmentTokenFile "C:\SecureStaging\enrollment-token.txt" `
+  -ListenUrl "http://0.0.0.0:5091" -ExposeToLan -AllowInsecureHttp
+```
+
+Uninstall preserves the database by default. `-PurgeData` permanently removes server state:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\uninstall-server.ps1
+powershell -ExecutionPolicy Bypass -File scripts\uninstall-server.ps1 -PurgeData
+```
 
 The administration console treats **Devices** and **Workstations** as searchable inventory.
 Device detail shows every workstation where the device was observed; workstation detail shows

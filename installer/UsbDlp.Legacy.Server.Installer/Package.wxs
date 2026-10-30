@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+      Name="$(var.ProductName)"
+      Manufacturer="Ruisi"
+      Version="$(var.ProductVersion)"
+      UpgradeCode="$(var.ProductUpgradeCode)"
+      Scope="perMachine"
+      InstallerVersion="300"
+      Compressed="yes">
+<?if $(var.TargetProfile) = xp ?>
+    <SummaryInformation Description="Ruisi native USB control server for Windows XP SP3 x86" />
+<?elseif $(var.TargetProfile) = win10 ?>
+    <SummaryInformation Description="Ruisi native USB control server for Windows 10" />
+<?else?>
+    <SummaryInformation Description="Ruisi native USB control server for Windows 7 SP1" />
+<?endif?>
+    <MediaTemplate EmbedCab="yes" />
+    <MajorUpgrade DowngradeErrorMessage="A newer Ruisi USB DLP Legacy Server is already installed." />
+    <Property Id="ARPNOREPAIR" Value="1" />
+<?if $(var.TargetProfile) = xp ?>
+    <Launch Condition="VersionNT = 501 AND ServicePackLevel &gt;= 3" Message="This package requires 32-bit Windows XP SP3." />
+<?elseif $(var.TargetProfile) = win10 ?>
+    <Launch Condition="VersionNT = 1000 AND WindowsBuild &gt;= 10240 AND WindowsBuild &lt; 22000" Message="This package requires Windows 10." />
+<?else?>
+    <Launch Condition="VersionNT = 601 AND ServicePackLevel &gt;= 1" Message="This package requires Windows 7 SP1." />
+<?endif?>
+
+    <StandardDirectory Id="$(var.ProgramFilesId)">
+      <Directory Id="INSTALLFOLDER" Name="Ruisi USB DLP Legacy Server" />
+    </StandardDirectory>
+
+    <Component Id="ServerComponent" Directory="INSTALLFOLDER" Guid="*" Bitness="$(var.ComponentBitness)">
+      <File Id="ServerExe" Source="$(var.PayloadDir)\UsbDlp.LegacyServer.exe" KeyPath="yes" />
+      <ServiceInstall
+          Id="ServerServiceInstall"
+          Name="UsbDlp.LegacyServer"
+          DisplayName="Ruisi USB DLP Legacy Server"
+          Description="Native USB device-control management server"
+          Type="ownProcess"
+          Start="auto"
+          ErrorControl="normal"
+          Account="LocalSystem" />
+      <ServiceControl Id="ServerServiceControl" Name="UsbDlp.LegacyServer" Stop="both" Remove="uninstall" Wait="yes" />
+    </Component>
+
+    <Feature Id="Server" Title="Ruisi USB DLP Legacy Server" Level="1">
+      <ComponentRef Id="ServerComponent" />
+    </Feature>
+  </Package>
+</Wix>

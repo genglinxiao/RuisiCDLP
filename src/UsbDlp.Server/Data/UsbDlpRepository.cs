@@ -116,10 +116,11 @@ public sealed class UsbDlpRepository
             upsert.Transaction = transaction;
             upsert.CommandText = """
                 INSERT INTO workstations(id,machine_sid,hostname,group_id,key_salt,key_hash,key_version,agent_version,
-                    enrolled_at_utc,last_seen_utc,applied_policy_version,health)
-                VALUES($id,$sid,$host,$group,$salt,$hash,1,$version,$now,$now,0,'healthy')
+                    enrolled_at_utc,last_seen_utc,applied_policy_version,health,os_version,architecture,implementation_profile)
+                VALUES($id,$sid,$host,$group,$salt,$hash,1,$version,$now,$now,0,'healthy',$os,$architecture,$profile)
                 ON CONFLICT(machine_sid) DO UPDATE SET hostname=$host,key_salt=$salt,key_hash=$hash,
-                    key_version=key_version+1,agent_version=$version,last_seen_utc=$now,revoked_at_utc=NULL;
+                    key_version=key_version+1,agent_version=$version,last_seen_utc=$now,revoked_at_utc=NULL,
+                    os_version=$os,architecture=$architecture,implementation_profile=$profile;
                 """;
             upsert.Parameters.AddWithValue("$id", workstationId.ToString());
             upsert.Parameters.AddWithValue("$sid", request.MachineSid);
@@ -128,6 +129,9 @@ public sealed class UsbDlpRepository
             upsert.Parameters.AddWithValue("$salt", salt);
             upsert.Parameters.AddWithValue("$hash", keyHash);
             upsert.Parameters.AddWithValue("$version", request.AgentVersion);
+            upsert.Parameters.AddWithValue("$os", request.SchemaVersion == 2 ? request.OsVersion! : "unknown");
+            upsert.Parameters.AddWithValue("$architecture", request.SchemaVersion == 2 ? request.Architecture! : "unknown");
+            upsert.Parameters.AddWithValue("$profile", request.SchemaVersion == 2 ? request.ImplementationProfile! : "unknown");
             upsert.Parameters.AddWithValue("$now", Utc(now));
             await upsert.ExecuteNonQueryAsync(cancellationToken);
         }
@@ -142,7 +146,7 @@ public sealed class UsbDlpRepository
 
         await transaction.CommitAsync(cancellationToken);
         string credential = $"{workstationId:D}.{secret}";
-        return (new(1, workstationId, credential, now, pollSeconds), created);
+        return (new(request.SchemaVersion, workstationId, credential, now, pollSeconds), created);
     }
 
     public async Task<AuthenticatedAgent?> AuthenticateAsync(string credential, CancellationToken cancellationToken)
@@ -788,6 +792,9 @@ public sealed class UsbDlpRepository
     private static async Task EnsureInventorySchemaAsync(SqliteConnection connection, CancellationToken cancellationToken)
     {
         await EnsureColumnAsync(connection, "workstations", "description", "TEXT", cancellationToken);
+        await EnsureColumnAsync(connection, "workstations", "os_version", "TEXT NOT NULL DEFAULT 'unknown'", cancellationToken);
+        await EnsureColumnAsync(connection, "workstations", "architecture", "TEXT NOT NULL DEFAULT 'unknown'", cancellationToken);
+        await EnsureColumnAsync(connection, "workstations", "implementation_profile", "TEXT NOT NULL DEFAULT 'unknown'", cancellationToken);
         await EnsureColumnAsync(connection, "events", "usb_device_id", "TEXT REFERENCES usb_devices(id)", cancellationToken);
         await EnsureColumnAsync(connection, "events", "workstation_device_id", "TEXT REFERENCES workstation_devices(id)", cancellationToken);
         await EnsureColumnAsync(connection, "access_requests", "usb_device_id", "TEXT REFERENCES usb_devices(id)", cancellationToken);

@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.12" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="8.0.1" />
     <ProjectReference Include="..\UsbDlp.Shared\UsbDlp.Shared.csproj" />
     <EmbeddedResource Update="Resources\SharedResource.zh-CN.resx" LogicalName="UsbDlp.Server.Resources.SharedResource.resources" />
   </ItemGroup>

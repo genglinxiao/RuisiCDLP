@@ -5,13 +5,17 @@ Companion to `usb-dlp-spec.md`, `usb-dlp-api-contract.md`, and
 
 1. **Automated tests** — written test-first by the coding agent, run in CI on every commit.
    Each has a stable ID (e.g. `T-M1-03`) that matches the test method name / trait.
-2. **Manual gate tests** — performed by a human at the end of each stage, on a real
-   Windows 11 VM where hardware is involved. A stage is not "done" until its gate is signed off.
+2. **Manual gate tests** — performed by a human at the end of each stage on the exact
+   OS/architecture VMs where hardware is involved. A stage is not "done" until its gate is signed off.
 
 Environments:
 - **Dev/CI** — any machine; runs all automated tests (`dotnet test`).
-- **VM-CLEAN** — fresh Windows 11 VM, snapshot before each destructive gate so you can revert.
-- **SRV-TEST** — the Stage-B server running locally or on a test host, reachable from VM-CLEAN.
+- **VM-MODERN-X86/X64** — fresh Windows 10 22H2 x86/x64 VMs.
+- **VM-WIN7-X86/X64** — fresh Windows 7 SP1 x86/x64 VMs with customer-approved prerequisite updates.
+- **VM-XP-X86** — fresh Windows XP Professional SP3 x86 VM on an isolated test network.
+- **VM-WIN11-X64** — fresh Windows 11 x64 safety/reference VM.
+- **SRV-TEST** — the Stage-B server running locally or on a test host, reachable from all matrix VMs.
+- **SRV-LEGACY** — native server installed in turn on VM-XP-X86 and VM-WIN7-X86/X64.
 
 Definition of done per stage = all automated tests for that stage green **and** the manual
 gate checklist fully passed and signed (name + date below each gate).
@@ -24,6 +28,7 @@ gate checklist fully passed and signed (name + date below each gate).
 |----|------|---------|------|
 | T-M0-01 | CI loop | test runner fails build on a failing test | unit |
 | T-M1-01 | Matcher | hard-coded class allowlist wins over a Block entry | unit |
+| T-M1-01a | Matcher | USBSTOR disk below a safety-class USB hub remains default-denied; the hub itself is never selected for enforcement | unit / XP integration |
 | T-M1-02 | Matcher | instance-id Allow beats vid+pid Block (specificity) | unit |
 | T-M1-03 | Matcher | Block beats Allow within one specificity tier | unit |
 | T-M1-04 | Matcher | expired entry is ignored | unit |
@@ -116,6 +121,31 @@ gate checklist fully passed and signed (name + date below each gate).
 | T-M8-07 | Uninstall | external policy preserved; ProgramData purge is explicit only | smoke |
 | T-M8-08 | Notifier | starts hidden on demand, relaunches after close, updates for newest device | UI/integration |
 | T-M8-09 | Notifier | success auto-dismisses; recent duplicate visibly shows retry time | UI/integration |
+| T-M9-01 | Server installer | server MSI contains server/runtime only; agent MSI contains workstation components only | smoke |
+| T-M9-02 | Server service | clean install creates auto-start service, recovery actions, protected data directory and healthy endpoints | Windows smoke |
+| T-M9-03 | Server secrets | protected source files install successfully; missing/empty/short inputs fail without secrets in MSI logs | security smoke |
+| T-M9-04 | Server network | default listener is loopback; LAN exposure and Domain/Private firewall rule require explicit switches | Windows smoke |
+| T-M9-05 | Server upgrade | major upgrade preserves database, admin access, enrollment state, policies, inventory and audit | Windows integration |
+| T-M9-06 | Server uninstall | service/binaries/firewall removed; protected state retained unless explicit purge is requested | Windows smoke |
+| T-M9-07 | Product isolation | server install/upgrade/uninstall does not modify agent service, files, state or enforcement and vice versa | Windows integration |
+| T-M10-01 | Contract parity | modern and every legacy profile produce identical policy decisions and canonical JSON from shared vectors | native/.NET unit |
+| T-M10-02 | Legacy build | native binaries import no CLR and no Win32 API newer than their declared minimum OS | static analysis |
+| T-M10-03 | Profile guard | each MSI accepts only its exact OS/architecture and rejects all others before mutation | VM smoke |
+| T-M10-04 | Legacy TLS | XP/7 agent and server negotiate TLS 1.2 AEAD only; bad chain/name/pin and downgrade fail closed | security integration |
+| T-M10-05 | Legacy storage | NTFS/ACL/integrity checks pass; FAT or user-writable state is rejected | VM security |
+| T-M10-06 | XP enforcement | unapproved multi-volume USBSTOR is disabled; approval/revocation converges; safety devices are untouched | XP hardware integration |
+| T-M10-06a | XP incomplete identity | a USBSTOR/WPD devnode with temporarily unavailable VID/PID remains governed and default-deny blocks it; diagnostics report `vid=unknown`/`pid=unknown` | XP hardware integration |
+| T-M10-06b | XP remote diagnostics | `DebugLog=1` records candidate inclusion/exclusion, decision, disable result and verification without secrets or unchanged-poll flooding; `DebugLog=0` suppresses diagnostic records | XP integration |
+| T-M10-06c | XP data ACL | installer protection succeeds on localized XP/NTFS using an XP-compatible SDDL DACL plus protected-inheritance API; resulting ACL contains only non-inherited SYSTEM and Administrators full control; FAT/FAT32 fails with an explicit diagnostic | XP integration |
+| T-M10-06d | XP Common AppData resolution | wrappers never invoke or parse `reg.exe`; each native binary resolves the known folder with `SHGetFolderPathW` and reports its effective data directory | XP integration |
+| T-M10-06e | XP Unicode paths | native configuration resolves Common AppData without batch/registry parsing and round-trips UTF-16 configuration under paths containing spaces and Chinese characters | XP integration |
+| T-M10-07 | XP limitation | stopped agent reports/retains `legacy_backstop_unavailable` and never claims full fail-closed health | XP integration |
+| T-M10-08 | Win7 enforcement | x86/x64 active enforcement and capability-tested installation backstop match declared health | Win7 hardware integration |
+| T-M10-09 | Legacy server | XP/7 native server passes API, admin, persistence, backup/restore and audit conformance | VM/browser integration |
+| T-M10-10 | Legacy server risk | install fails without explicit risk acceptance; listener defaults loopback and warning is persistent | VM security smoke |
+| T-M10-11 | Cross-profile | every agent profile enrolls/syncs/requests against every server profile | matrix integration |
+| T-M10-12 | Dependency gate | legacy TLS/SQLite SBOM, reproducible source build and current vulnerability review pass | release security |
+| T-M10-13 | Deployment kits | every profile ZIP has two isolated MSIs, two compatible scripts, editable config/secrets, hashes, live mode and default deny | package smoke |
 
 CI gate: the build fails if any automated test fails, if evaluator branch coverage < 95%,
 or if resource-key parity (T-M7-05 / T-M8-01) finds a missing/extra key.
@@ -152,7 +182,18 @@ Signed: __________ Date: ______
 
 Signed: __________ Date: ______
 
-### GATE C — agent device layer (VM-CLEAN, snapshot first)
+### GATE B2 — packaged server (clean Windows Server VM)
+- [ ] B2.1 Inspect both MSIs: the server package contains no agent/notifier/CLI, and the agent package contains no server executable or server service.
+- [ ] B2.2 Install with protected password/token files; `UsbDlp.Server` starts automatically, recovery is configured, both health URLs return 200, and admin login succeeds.
+- [ ] B2.3 Verify `%ProgramData%\Ruisi\UsbDlpServer` grants access only to Administrators and SYSTEM; verbose MSI logs contain neither secret value.
+- [ ] B2.4 Verify the default endpoint is reachable from the server itself but not another host. Reinstall for an isolated LAN test and verify only the selected TCP port is opened on Domain/Private profiles.
+- [ ] B2.5 Enroll an agent and create policy/inventory/audit data, upgrade one version, then verify all state and credentials remain valid.
+- [ ] B2.6 Uninstall and verify service, binaries and firewall rule are gone while the database remains. Reinstall and recover state, then uninstall with explicit purge and verify the data directory is gone.
+- [ ] B2.7 Repeat install/uninstall while the workstation package is present and verify its service, files, state and active USB enforcement remain unchanged.
+
+Signed: __________ Date: ______
+
+### GATE C — agent device layer (VM-MODERN-X64, snapshot first)
 - [ ] C1 `UsbDlp.Cli monitor` prints correct VID/PID/serial/class when you plug in a USB
       stick plus manufacturer/model/description when Windows provides them; serial=null and missing
       metadata cases are handled without invented values.
@@ -173,7 +214,7 @@ Signed: __________ Date: ______
 
 Signed: __________ Date: ______
 
-### GATE D — agent integration (VM-CLEAN + SRV-TEST)
+### GATE D — agent integration (VM-MODERN-X64 + SRV-TEST)
 - [ ] D1 Agent enrolls; workstation appears "online" with current policy version in the console.
 - [ ] D2 On reference hardware, run 100 scripted/manual insertion cycles: at least 95 block
       within 1 s and all within 2 s. Each notification appears within 3 s and every `blocked`
@@ -195,7 +236,7 @@ Signed: __________ Date: ______
 
 Signed: __________ Date: ______
 
-### GATE E — notifier + full deployment (VM-CLEAN, snapshot first)
+### GATE E — notifier + full deployment (VM-MODERN-X64, snapshot first)
 - [ ] E1 MSI installs; service is present, auto-start, recovery=restart; notifier can be launched
       into the active user session by the service without an always-visible idle window.
 - [ ] E2 Block event → notifier toast appears in the session's language (test once EN, once 中文)
@@ -213,11 +254,48 @@ Signed: __________ Date: ______
 
 Signed: __________ Date: ______  → **Pass on all gates = release candidate.**
 
+### GATE F — legacy compatibility matrix (isolated VMs, snapshots required)
+
+Build-host evidence recorded 2026-08-28: all five profile-specific agent/server MSI pairs and
+restricted ZIP kits build successfully; native policy and DPAPI tests pass for XP x86 and Windows
+10 x86/x64; XP binaries are x86, subsystem 5.01, statically linked, and contain no CLR or
+Vista-only `WTSQueryUserToken` import; all kit SHA-256 manifests pass. This cross-build evidence
+does not satisfy the unchecked VM and physical-hardware gates below.
+
+XP VM evidence recorded 2026-08-28 on Windows XP Professional SP3 x86 in a Generation 1
+Hyper-V VM with an isolated internal network: both profile MSIs and both installation scripts
+returned zero; the native policy and DPAPI suites passed; `UsbDlp.LegacyServer` and
+`UsbDlp.LegacyAgent` reached `RUNNING`; the agent log reported `dry_run=false`,
+`default_deny=true`, successful enrollment, and repeated policy version 1 application; an
+authenticated host request to `/api/v1/admin/workstations` returned HTTP 200 and the
+`RUISI-XP-LAB` inventory record. This is evidence for the XP VM portions of F1 and F9 only.
+It does not close F3-F8: this Hyper-V configuration cannot pass a physical USB device directly
+to the guest, and notifier, approval/revocation, service-down, TLS, backup/restore, upgrade,
+uninstall, and physical enforcement cases remain unchecked.
+
+- [ ] F1 Build XP x86, Windows 7 x86/x64, and Windows 10 x86/x64 agent/server MSIs and restricted deployment kits; verify exact-profile launch conditions and absence of CLR imports in legacy binaries.
+- [ ] F2 Run shared policy/API vectors against every implementation; outputs are byte-canonical where specified and semantically identical everywhere else.
+- [ ] F3 On each agent VM, repeat discovery, default deny, request, approval, attached revocation, replug, multi-volume, queue/offline, notifier relaunch, and safety-allow tests.
+- [ ] F4 On XP, stop the agent and verify the console reports `legacy_backstop_unavailable`; confirm documentation does not promise the modern service-down backstop.
+- [ ] F5 Install each legacy server only with explicit risk acceptance; administer it remotely from a current browser, then exercise enrollment, approval, revoke, inventory, audit, backup, restore and upgrade.
+- [ ] F6 Run every agent profile against every server profile. Verify profile/architecture inventory, warning badges, health, policy versions and timestamps.
+- [ ] F7 Prove TLS 1.0/1.1, weak ciphers, bad hostnames, bad chains and wrong pins are rejected on XP/7; review the legacy dependency SBOM and unresolved vulnerabilities.
+- [ ] F8 Verify legacy packages and release manifests, secret-free logs, ACLs, service recovery, uninstall preservation and explicit purge on all matrix VMs.
+- [ ] F9 Run both scripts from each kit after editing only `deployment.ini`, `admin-password.txt`, and `enrollment-token.txt`; verify client live mode/default deny and server login/enrollment without secrets in command lines or logs.
+- [ ] F10 On a fresh XP SP3 x86 NTFS snapshot, install the SetupAPI kit only. For each USBSTOR disk record class-installer return, devnode status/problem and actual file read/write results. Run at least 20 replug cycles, a second stick, every LUN of a multi-LUN stick, approval, revocation, service restart and reboot. `blocked_verified` must never coexist with successful unapproved file I/O. Validate exact agent-owned re-enable, rollback with a disconnected owned device (must refuse removal), retry with it connected, and no effect on keyboard, hub, or internal disk.
+- [ ] F11 Restore a clean XP SP3 x86 NTFS snapshot, install the filter kit only, and reboot. Confirm XP boots, internal disk and input devices work, filter service is present, and every unapproved USBSTOR volume rejects file reads/writes, raw-disk opens and storage-control requests. Test approval, revocation while attached, replug, multi-LUN, service-down insertion, service restart and driver removal/reboot. Capture blue-screen/minidump and System Event Log on any failure; restore snapshot rather than editing a damaged system live.
+- [ ] F12 On both tracks, verify notifier says block is unconfirmed when enforcement cannot be verified; it must not display a false blocked claim. Verify MSI payloads, x86/5.01 PE headers, SHA-256 manifests, server/agent isolation and the documented rollback. Neither track is release-qualified on cross-build evidence alone.
+- [ ] F13 **Known failing regression:** 1.1.6 permits file I/O after a local administrator manually enables a denied device, until a later reconciliation disables it again. Time the exposure window and test copying a file during it; a subsequent `blocked_verified` does not pass this test.
+- [ ] F14 **Known failing regression:** 1.1.7 logs filter request result 2 for all disks and no `blocked_verified`. On the diagnostic build, run `client\diagnose-filter.cmd` after reboot, collect its full output and the XP System Event Log, then confirm the agent's `stage=` identifies the failure. Do not proceed as protected if the health check fails. Even if it passes, manually enable an unapproved disk in Device Manager and test actual reads/writes on every LUN both before and after replug; any success fails the track.
+
+Signed: __________ Date: ______  → **Legacy packages may ship only after all F gates pass.**
+
 ---
 
 ## Regression / release checklist (run before any release build)
-- [ ] Full `dotnet test` green on a clean checkout; coverage threshold met.
+- [ ] Full modern `dotnet test` and legacy native test suites green on clean checkouts; coverage thresholds met.
 - [ ] GATE C, D, E manual checklists re-run on a fresh VM snapshot.
+- [ ] GATE F completed on the full legacy OS/architecture matrix.
 - [ ] MSI + binaries Authenticode signature verifies (`signtool verify /pa`).
 - [ ] Both .resx locales complete (parity tests green).
 - [ ] Cert-pin still matches the deployed server certificate (rotate config if the cert changed).
@@ -243,3 +321,4 @@ both the automated evidence and every named manual gate; a narrower test does no
 | AC-9 internal/safety device protection | T-M2-05, T-M3-03, T-M3-04 | C3-C5, C7 |
 | AC-10 API/application security | T-M4-01, T-M4-07, T-M4-09, T-M6-01 through T-M6-12, T-M7-01 through T-M7-08, T-M8-05 | B6-B7, D9, release checklist |
 | AC-11 searchable pair inventory | T-M2-10, T-M6-13 through T-M6-20, T-M7-11 through T-M7-15 | B8-B12 |
+| AC-12 legacy compatibility | T-M10-01 through T-M10-13 | F1-F9 |

@@ -1,6 +1,6 @@
 # USB Device Control - Agent API Contract
 
-Version 1.1. This document is normative and supplements `usb-dlp-spec.md` sections 5,
+Version 1.2. This document is normative and supplements `usb-dlp-spec.md` sections 5,
 8, 9, 10, and 13.
 
 ## 1. Common conventions
@@ -11,6 +11,11 @@ are ignored. IDs are lowercase canonical UUID strings on output; inputs are case
 
 Every request may include `X-Correlation-ID` as a UUID. The server creates one when absent and
 returns it. Authenticated requests use `Authorization: Bearer <workstation-id>.<secret>`.
+
+The JSON contract is implementation-neutral. `modern` .NET and native `legacy` clients and servers
+MUST accept and produce the same canonical payloads and pass the same black-box conformance suite.
+All profiles use HTTPS with TLS 1.2 or newer. Legacy profiles use the portable TLS requirements in
+the architecture specification and MUST NOT negotiate a weaker protocol because the host OS is old.
 
 Errors use `application/problem+json`:
 
@@ -71,27 +76,38 @@ is not stored as the prior request's status.
 
 ```json
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "enrollmentToken": "base64url-secret",
   "hostname": "WS-ENG-042",
   "machineSid": "S-1-5-21-...",
   "agentVersion": "1.0.0",
+  "osVersion": "5.1.2600-sp3",
+  "architecture": "x86",
+  "implementationProfile": "legacy-xp-x86",
   "clientNonce": "uuid"
 }
 ```
 
+Enrollment schema 1 remains accepted during migration and omits the three platform fields; the
+server records its profile as `unknown` until a schema-2 re-enrollment. Schema 2 requires all fields.
 Hostname is 1-63, machine SID 1-184 and must parse as a Windows SID, version is SemVer 2.0, and
-nonce is UUID. Success is 201 for first enrollment or 200 for idempotent replay/re-enrollment:
+nonce is UUID. `osVersion` is 1-64 printable ASCII characters, `architecture` is `x86|x64`, and
+`implementationProfile` is one of the release-qualified profile identifiers in the architecture
+specification. A profile/architecture mismatch returns 422. Success is 201 for first enrollment or
+200 for idempotent replay/re-enrollment:
 
 ```json
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "workstationId": "uuid",
   "apiCredential": "uuid.base64url-secret",
   "serverTimeUtc": "2026-08-18T12:00:00.000Z",
   "policyPollSeconds": 300
 }
 ```
+
+The response `schemaVersion` matches the accepted enrollment schema: 1 for a schema-1 migration
+client and 2 for a schema-2 client.
 
 Replaying the same token/machine SID/nonce within 10 minutes returns the same response and does not
 rotate twice. A different nonce for the same active machine rotates the credential. Token, nonce,
