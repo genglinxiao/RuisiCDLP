@@ -5,6 +5,8 @@
 #include <cfgmgr32.h>
 #include <setupapi.h>
 
+#include <cstdlib>
+#include <cwchar>
 #include <vector>
 
 #ifdef USB_DLP_XP_FILTER
@@ -87,7 +89,9 @@ bool filter_request(const std::wstring& instance_id, bool set_allowed,
 }
 #endif
 
-#ifdef USB_DLP_XP_SETUPAPI
+// Class-installer state change. This is what Device Manager itself uses and it
+// writes the state into the device's config flags, so it survives the
+// re-enumeration that follows a USB re-plug on XP.
 bool change_state(const std::wstring& instance_id, DWORD state, unsigned long* result_code) {
   HDEVINFO set = SetupDiCreateDeviceInfoList(nullptr, nullptr);
   if (set == INVALID_HANDLE_VALUE) {
@@ -134,6 +138,96 @@ bool change_state(const std::wstring& instance_id, DWORD state, unsigned long* r
   if (result_code != nullptr) *result_code = result;
   return changed;
 }
+
+#ifndef USB_DLP_XP_SETUPAPI
+// XP quirk observed on real hardware: right after a re-plug the USB function
+// device re-enumerates its storage child, so CM_Disable_DevNode() on the disk
+// node returns CR_SUCCESS and the child is enabled again a moment later. The
+// first insert sticks, every later insert does not. Disabling the parent
+// function device (the node whose service is USBSTOR) is what makes it hold.
+// The service check is mandatory: never disable a hub.
+bool storage_function_parent(DEVINST node, DEVINST* parent) {
+  DEVINST candidate = 0;
+  if (CM_Get_Parent(&candidate, node, 0) != CR_SUCCESS) return false;
+  wchar_t service[64] = {};
+  ULONG size = sizeof(service);
+  ULONG type = 0;
+  if (CM_Get_DevNode_Registry_PropertyW(candidate, CM_DRP_SERVICE, &type, service,
+                                        &size, 0) != CR_SUCCESS) return false;
+  if (_wcsicmp(service, L"USBSTOR") != 0) return false;
+  *parent = candidate;
+  return true;
+}
+
+bool node_is_disabled(DEVINST node, unsigned long* status_out, unsigned long* problem_out) {
+  ULONG status = 0;
+  ULONG problem = 0;
+  if (CM_Get_DevNode_Status(&status, &problem, node, 0) != CR_SUCCESS) return false;
+  if (status_out != nullptr) *status_out = status;
+  if (problem_out != nullptr) *problem_out = problem;
+  return (status & DN_HAS_PROBLEM) != 0 && problem == CM_PROB_DISABLED;
+}
+
+// Extracts N from the PDO name "\Device\Harddisk2\DR7".
+bool disk_number_of(const std::wstring& instance_id, ULONG* number) {
+  DEVINST node = 0;
+  CONFIGRET result = CR_FAILURE;
+  if (!locate(instance_id, &node, &result)) return false;
+  wchar_t pdo_name[256] = {};
+  ULONG size = sizeof(pdo_name);
+  ULONG type = 0;
+  if (CM_Get_DevNode_Registry_PropertyW(node, CM_DRP_PHYSICAL_DEVICE_OBJECT_NAME, &type,
+                                        pdo_name, &size, 0) != CR_SUCCESS) return false;
+  const wchar_t* marker = wcsstr(pdo_name, L"Harddisk");
+  if (marker == nullptr) return false;
+  const wchar_t* digits = marker + 8;
+  if (*digits < L'0' || *digits > L'9') return false;
+  *number = static_cast<ULONG>(_wtoi(digits));
+  return true;
+}
+
+std::wstring windows_drive_letter() {
+  wchar_t root[MAX_PATH] = {};
+  if (GetWindowsDirectoryW(root, MAX_PATH) == 0) return std::wstring();
+  return std::wstring(1, root[0]);
+}
+
+// Last resort for devices whose devnode refuses to stay disabled - typically
+// 2 TB USB disks with a GPT layout that XP keeps re-probing. The driver stack
+// stays alive, but every volume on that disk is locked, dismounted and its
+// drive letter deleted, so the user cannot reach the data. Requires the process
+// to keep running (the next poll repeats it after a re-enumeration).
+bool dismount_disk_volumes(ULONG disk_number, int* dismounted) {
+  bool touched = false;
+  const std::wstring system_letter = windows_drive_letter();
+  for (wchar_t letter = L'A'; letter <= L'Z'; ++letter) {
+    const std::wstring drive(1, letter);
+    if (!system_letter.empty() && _wcsicmp(drive.c_str(), system_letter.c_str()) == 0) continue;
+    const std::wstring device_path = std::wstring(L"\\\\.\\") + letter + L":";
+    HANDLE volume = CreateFileW(device_path.c_str(), GENERIC_READ | GENERIC_WRITE,
+                                FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
+                                0, nullptr);
+    if (volume == INVALID_HANDLE_VALUE) continue;
+    VOLUME_DISK_EXTENTS extents = {};
+    DWORD returned = 0;
+    const BOOL queried = DeviceIoControl(volume, IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS, nullptr,
+                                         0, &extents, sizeof(extents), &returned, nullptr);
+    if (!queried || extents.NumberOfDiskExtents == 0 ||
+        extents.Extents[0].DiskNumber != disk_number) {
+      CloseHandle(volume);
+      continue;
+    }
+    DeviceIoControl(volume, FSCTL_LOCK_VOLUME, nullptr, 0, nullptr, 0, &returned, nullptr);
+    DeviceIoControl(volume, FSCTL_DISMOUNT_VOLUME, nullptr, 0, nullptr, 0, &returned, nullptr);
+    CloseHandle(volume);
+    // Drive letters live in the DOS device namespace; removing the symbolic link
+    // here is what actually hides the volume from Explorer on XP.
+    const std::wstring target = drive + L":";
+    if (DefineDosDeviceW(DDD_REMOVE_DEFINITION, target.c_str(), nullptr)) touched = true;
+    if (dismounted != nullptr) ++(*dismounted);
+  }
+  return touched;
+}
 #endif
 
 }  // namespace
@@ -169,7 +263,41 @@ bool WindowsDeviceEnforcer::disable(
 #else
   DEVINST node = 0;
   CONFIGRET result = CR_FAILURE;
-  if (locate(instance_id, &node, &result)) result = CM_Disable_DevNode(node, 0);
+  if (!locate(instance_id, &node, &result)) {
+    if (result_code != nullptr) *result_code = result;
+    return false;
+  }
+  result = CM_Disable_DevNode(node, 0);
+  if (result == CR_SUCCESS) {
+    DEVINST parent = 0;
+    if (storage_function_parent(node, &parent)) CM_Disable_DevNode(parent, 0);
+  }
+  ULONG status = 0;
+  ULONG problem = 0;
+  if (!node_is_disabled(node, &status, &problem)) {
+    // XP: CM_Disable_DevNode can report CR_SUCCESS while the USB stack
+    // re-enumerates the disk and it comes back enabled. Fall back to the class
+    // installer path with a global state change, which persists.
+    unsigned long setup_result = 0;
+    if (change_state(instance_id, DICS_DISABLE, &setup_result)) result = CR_SUCCESS;
+  }
+  if (!node_is_disabled(node, &status, &problem)) {
+    // Still alive: large USB disks with an unreadable partition table keep being
+    // re-probed. Take the volumes away instead of fighting the driver stack.
+    ULONG disk = 0;
+    int dismounted = 0;
+    if (disk_number_of(instance_id, &disk)) dismount_disk_volumes(disk, &dismounted);
+    if (dismounted > 0) {
+      // The pending removal was almost certainly parked on an open volume handle
+      // (DN_WILL_BE_REMOVED). Now that the volumes are gone the PnP manager can
+      // finish, so retry once here instead of waiting for the next poll - that
+      // wait is what keeps an already plugged disk readable for up to a minute
+      // after its approval expires.
+      CM_Disable_DevNode(node, 0);
+      DEVINST parent = 0;
+      if (storage_function_parent(node, &parent)) CM_Disable_DevNode(parent, 0);
+    }
+  }
   if (result_code != nullptr) *result_code = result;
   return result == CR_SUCCESS;
 #endif
@@ -206,7 +334,19 @@ bool WindowsDeviceEnforcer::enable(
 #else
   DEVINST node = 0;
   CONFIGRET result = CR_FAILURE;
-  if (locate(instance_id, &node, &result)) result = CM_Enable_DevNode(node, 0);
+  if (!locate(instance_id, &node, &result)) {
+    if (result_code != nullptr) *result_code = result;
+    return false;
+  }
+  DEVINST parent = 0;
+  if (storage_function_parent(node, &parent)) CM_Enable_DevNode(parent, 0);
+  result = CM_Enable_DevNode(node, 0);
+  ULONG status = 0;
+  ULONG problem = 0;
+  if (node_is_disabled(node, &status, &problem)) {
+    unsigned long setup_result = 0;
+    if (change_state(instance_id, DICS_ENABLE, &setup_result)) result = CR_SUCCESS;
+  }
   if (result_code != nullptr) *result_code = result;
   return result == CR_SUCCESS;
 #endif
@@ -238,12 +378,34 @@ bool WindowsDeviceEnforcer::is_disabled(
   CONFIGRET result = CR_FAILURE;
   ULONG status = 0;
   ULONG problem = 0;
-  if (locate(instance_id, &node, &result)) {
-    result = CM_Get_DevNode_Status(&status, &problem, node, 0);
+  const bool located = locate(instance_id, &node, &result);
+  if (located) result = CM_Get_DevNode_Status(&status, &problem, node, 0);
+  if (located && result == CR_SUCCESS) {
+    if (result_code != nullptr) *result_code = result;
+    if (status_bits != nullptr) *status_bits = status;
+    if (problem_code != nullptr) *problem_code = problem;
+    *disabled = (status & DN_HAS_PROBLEM) != 0 && problem == CM_PROB_DISABLED;
+    return true;
   }
+#ifndef USB_DLP_XP_SETUPAPI
+  // The disk child vanishes once its USB function parent is disabled, so a plain
+  // status query fails. That is a blocked device, not an unknown one.
+  DEVINST phantom = 0;
+  std::vector<wchar_t> phantom_id(instance_id.begin(), instance_id.end());
+  phantom_id.push_back(L'\0');
+  if (CM_Locate_DevNodeW(&phantom, &phantom_id[0], CM_LOCATE_DEVNODE_PHANTOM) == CR_SUCCESS) {
+    DEVINST parent = 0;
+    if (storage_function_parent(phantom, &parent) &&
+        node_is_disabled(parent, status_bits, problem_code)) {
+      *disabled = true;
+      if (result_code != nullptr) *result_code = CR_SUCCESS;
+      return true;
+    }
+  }
+#endif
   if (result_code != nullptr) *result_code = result;
-  if (status_bits != nullptr) *status_bits = result == CR_SUCCESS ? status : 0;
-  if (problem_code != nullptr) *problem_code = result == CR_SUCCESS ? problem : 0;
+  if (status_bits != nullptr) *status_bits = 0;
+  if (problem_code != nullptr) *problem_code = 0;
   if (result != CR_SUCCESS) return false;
   *disabled = (status & DN_HAS_PROBLEM) != 0 && problem == CM_PROB_DISABLED;
   return true;

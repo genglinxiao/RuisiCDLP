@@ -22,6 +22,12 @@ namespace {
 #define USB_DLP_PROFILE "host"
 #endif
 
+// Stamped by CMake at configure time so every log line identifies the binary
+// that produced it. Two hours were lost today guessing which build was running.
+#ifndef USB_DLP_BUILD_STAMP
+#define USB_DLP_BUILD_STAMP "unstamped"
+#endif
+
 const wchar_t* const kServiceName = L"UsbDlp.LegacyAgent";
 SERVICE_STATUS_HANDLE g_status_handle = nullptr;
 SERVICE_STATUS g_status = {};
@@ -91,18 +97,107 @@ bool filter_usb_disk(const std::wstring& instance_id) {
 #endif
 }
 
-bool read_bool(const std::wstring& ini, const wchar_t* key, bool default_value) {
-  return GetPrivateProfileIntW(L"Agent", key, default_value ? 1 : 0, ini.c_str()) != 0;
+// GetPrivateProfile* only understands ANSI text. --configure writes the ini as
+// UTF-16LE with a BOM, so every lookup silently fell back to its default:
+// DryRun became true (agent only logged "would_block" and never disabled
+// anything) and ServerUrl became empty. Parse the file here instead and accept
+// ANSI, UTF-8 and UTF-16LE.
+std::wstring read_config_text(const std::wstring& path) {
+  HANDLE file = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                            nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+  if (file == INVALID_HANDLE_VALUE) return std::wstring();
+  const DWORD size = GetFileSize(file, nullptr);
+  if (size == INVALID_FILE_SIZE || size == 0 || size > 256 * 1024) {
+    CloseHandle(file);
+    return std::wstring();
+  }
+  std::vector<char> raw(size, 0);
+  DWORD read = 0;
+  const BOOL read_ok = ReadFile(file, &raw[0], size, &read, nullptr);
+  CloseHandle(file);
+  if (!read_ok || read == 0) return std::wstring();
+  raw.resize(read);
+  const unsigned char* bytes = reinterpret_cast<const unsigned char*>(&raw[0]);
+  std::wstring text;
+  if (raw.size() >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE) {
+    const std::size_t count = (raw.size() - 2) / sizeof(wchar_t);
+    text.assign(reinterpret_cast<const wchar_t*>(&raw[2]), count);
+  } else {
+    UINT codepage = CP_ACP;
+    std::size_t offset = 0;
+    if (raw.size() >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF) {
+      codepage = CP_UTF8;
+      offset = 3;
+    }
+    const int count = MultiByteToWideChar(codepage, 0, &raw[offset],
+                                          static_cast<int>(raw.size() - offset), nullptr, 0);
+    if (count <= 0) return std::wstring();
+    text.resize(static_cast<std::size_t>(count));
+    MultiByteToWideChar(codepage, 0, &raw[offset], static_cast<int>(raw.size() - offset),
+                        &text[0], count);
+  }
+  if (!text.empty() && text[0] == 0xFEFF) text.erase(0, 1);
+  return text;
+}
+
+std::wstring trim_copy(const std::wstring& value) {
+  const std::wstring::size_type first = value.find_first_not_of(L" \t\r\n");
+  if (first == std::wstring::npos) return std::wstring();
+  const std::wstring::size_type last = value.find_last_not_of(L" \t\r\n");
+  return value.substr(first, last - first + 1);
 }
 
 std::wstring read_ini_string(
     const std::wstring& ini,
     const wchar_t* key,
     const wchar_t* default_value) {
-  std::vector<wchar_t> value(2048, L'\0');
-  GetPrivateProfileStringW(L"Agent", key, default_value, &value[0],
-                           static_cast<DWORD>(value.size()), ini.c_str());
-  return &value[0];
+  const std::wstring text = read_config_text(ini);
+  if (text.empty()) return default_value;
+  bool in_section = false;
+  std::wstring::size_type pos = 0;
+  while (pos <= text.size()) {
+    std::wstring::size_type end = text.find(L'\n', pos);
+    if (end == std::wstring::npos) end = text.size();
+    const std::wstring line = trim_copy(text.substr(pos, end - pos));
+    pos = end + 1;
+    if (line.empty() || line[0] == L';' || line[0] == L'#') continue;
+    if (line[0] == L'[') {
+      const std::wstring::size_type close = line.find(L']');
+      const std::wstring name =
+          close == std::wstring::npos ? line.substr(1) : line.substr(1, close - 1);
+      in_section = _wcsicmp(trim_copy(name).c_str(), L"Agent") == 0;
+      continue;
+    }
+    if (!in_section) continue;
+    const std::wstring::size_type equals = line.find(L'=');
+    if (equals == std::wstring::npos) continue;
+    if (_wcsicmp(trim_copy(line.substr(0, equals)).c_str(), key) == 0)
+      return trim_copy(line.substr(equals + 1));
+  }
+  return default_value;
+}
+
+bool read_bool(const std::wstring& ini, const wchar_t* key, bool default_value) {
+  const std::wstring value = read_ini_string(ini, key, default_value ? L"1" : L"0");
+  return value == L"1" || _wcsicmp(value.c_str(), L"true") == 0;
+}
+
+DWORD read_ini_int(const std::wstring& ini, const wchar_t* key, int default_value) {
+  const std::wstring value = read_ini_string(ini, key, L"");
+  if (value.empty()) return static_cast<DWORD>(default_value);
+  return static_cast<DWORD>(_wtoi(value.c_str()));
+}
+
+// Unique enough for the server's request de-duplication window; the agent has no
+// COM initialised in service context, so no CoCreateGuid here.
+std::string make_client_request_id() {
+  static volatile LONG counter = 0;
+  const LONG sequence = InterlockedIncrement(&counter);
+  char buffer[64] = {};
+  sprintf_s(buffer, sizeof(buffer), "xp-%08lx-%08lx",
+            static_cast<unsigned long>(GetTickCount()),
+            static_cast<unsigned long>(sequence));
+  return std::string(buffer);
 }
 
 bool read_small_file(const std::wstring& path, std::string* value) {
@@ -174,7 +269,7 @@ int configure_agent(
 }
 
 DWORD read_poll_ms(const std::wstring& ini) {
-  UINT seconds = GetPrivateProfileIntW(L"Agent", L"LocalPollSeconds", 2, ini.c_str());
+  UINT seconds = read_ini_int(ini, L"LocalPollSeconds", 2);
   if (seconds < 1) seconds = 1;
   if (seconds > 300) seconds = 300;
   return seconds * 1000;
@@ -357,8 +452,7 @@ int run_agent(HANDLE stop_event) {
   const bool dry_run = read_bool(ini, L"DryRun", true);
   const bool debug_log = read_bool(ini, L"DebugLog", false);
   const DWORD poll_ms = read_poll_ms(ini);
-  UINT policy_poll_seconds = GetPrivateProfileIntW(
-      L"Agent", L"PolicyPollSeconds", 30, ini.c_str());
+  UINT policy_poll_seconds = read_ini_int(ini, L"PolicyPollSeconds", 30);
   if (policy_poll_seconds < 5) policy_poll_seconds = 5;
   if (policy_poll_seconds > 3600) policy_poll_seconds = 3600;
   const DWORD policy_poll_ms = policy_poll_seconds * 1000;
@@ -406,10 +500,13 @@ int run_agent(HANDLE stop_event) {
   }
   std::set<std::wstring> unverified_nodes;
   std::set<std::wstring> attempted_nodes;
+  std::set<std::wstring> requested_nodes;
   std::set<std::wstring> previous_present_nodes;
   std::set<std::wstring> previous_device_diagnostics;
   DWORD last_policy_poll = GetTickCount() - policy_poll_ms;
-  log_line(data_directory, dry_run ? L"agent_start dry_run=true" : L"agent_start dry_run=false default_deny=true");
+  log_line(data_directory,
+           dry_run ? L"agent_start build=" USB_DLP_BUILD_STAMP L" dry_run=true"
+                   : L"agent_start build=" USB_DLP_BUILD_STAMP L" dry_run=false default_deny=true");
 #ifdef USB_DLP_XP_SETUPAPI
   log_line(data_directory, L"enforcement_backend=setupapi_propertychange");
 #elif defined(USB_DLP_XP_FILTER)
@@ -496,7 +593,26 @@ int run_agent(HANDLE stop_event) {
       ULARGE_INTEGER ticks = {};
       ticks.LowPart = file_time.dwLowDateTime;
       ticks.HighPart = file_time.dwHighDateTime;
-      const std::int64_t unix_ms = static_cast<std::int64_t>((ticks.QuadPart - 116444736000000000ULL) / 10000ULL);
+      std::int64_t unix_ms = static_cast<std::int64_t>((ticks.QuadPart - 116444736000000000ULL) / 10000ULL);
+      {
+        // Moving the system clock backwards must not revive an expired grant.
+        // Keep a high-water mark and never evaluate policy against an earlier
+        // instant than the latest one we have already seen.
+        static std::int64_t clock_high_water_ms = 0;
+        static std::int64_t clock_rollback_logged_ms = 0;
+        if (unix_ms + 2000 < clock_high_water_ms) {
+          if (clock_high_water_ms - unix_ms > 60000 &&
+              clock_high_water_ms - clock_rollback_logged_ms > 300000) {
+            log_line(data_directory, L"clock_rollback_detected enforced_utc_ms=" +
+                                         std::to_wstring(clock_high_water_ms) +
+                                         L" raw_utc_ms=" + std::to_wstring(unix_ms));
+            clock_rollback_logged_ms = clock_high_water_ms;
+          }
+          unix_ms = clock_high_water_ms;
+        } else if (unix_ms > clock_high_water_ms) {
+          clock_high_water_ms = unix_ms;
+        }
+      }
       for (const usb_dlp::WindowsDevice& device : devices) {
         present_nodes.insert(device.instance_id);
         const bool newly_present =
@@ -544,6 +660,14 @@ int run_agent(HANDLE stop_event) {
               log_line(data_directory, L"enforce_error instance_id=" + device.instance_id +
                                            L" result=" + std::to_wstring(result) +
                                            L" stage=" + enforcement_diagnostic);
+              // CR_NO_SUCH_DEVNODE (13) happens while the USB stack is still
+              // rebuilding the node right after a re-plug. Retrying inside the
+              // same pass closes most of the window in which the volume is
+              // mountable but not yet blocked.
+              for (int retry = 0; retry < 5; ++retry) {
+                Sleep(100);
+                if (enforcer.disable(device.instance_id, &result, &enforcement_diagnostic)) break;
+              }
             }
             status_bits = 0;
             problem_code = 0;
@@ -577,6 +701,27 @@ int run_agent(HANDLE stop_event) {
             attempted_nodes.erase(device.instance_id);
             if (newly_present || unverified_nodes.erase(device.instance_id) != 0) {
               log_line(data_directory, L"blocked_verified instance_id=" + device.instance_id);
+            }
+            // The approval workflow was dead until now: request_access() existed but
+            // nothing called it, so the server never had a pending request to approve.
+            // Ask once per device instance, only when the block is real.
+            if (has_identity && api.valid() && requested_nodes.insert(device.instance_id).second) {
+              usb_dlp::AccessRequestResult access_request;
+              std::wstring request_error;
+              if (api.request_access(
+                      identity, device, make_client_request_id(), std::string("S-1-0-0"),
+                      std::string("UNKNOWN"), 1,
+                      std::string("Device blocked by default policy; end user requested "
+                                  "temporary access from the workstation."),
+                      &access_request, &request_error)) {
+                log_line(data_directory, L"access_request_submitted instance_id=" +
+                                             device.instance_id + L" request_id=" +
+                                             usb_dlp::utf8_to_wide(access_request.request_id));
+              } else {
+                requested_nodes.erase(device.instance_id);
+                log_line(data_directory, L"access_request_failed instance_id=" +
+                                             device.instance_id + L" error=" + request_error);
+              }
             }
           } else if (!dry_run) {
             const bool first_unverified = unverified_nodes.insert(device.instance_id).second;

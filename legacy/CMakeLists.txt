@@ -78,6 +78,8 @@ if(WIN32)
   add_executable(UsbDlp.LegacyAgent src/windows/agent_main.cpp)
   target_link_libraries(UsbDlp.LegacyAgent PRIVATE usb_dlp_legacy_windows)
   target_compile_definitions(UsbDlp.LegacyAgent PRIVATE USB_DLP_PROFILE="${USB_DLP_TARGET_PROFILE}")
+  string(TIMESTAMP USB_DLP_BUILD_STAMP "%Y-%m-%dT%H:%MZ" UTC)
+  target_compile_definitions(UsbDlp.LegacyAgent PRIVATE USB_DLP_BUILD_STAMP="${USB_DLP_BUILD_STAMP}")
 
   add_executable(UsbDlp.LegacyNotifier WIN32 src/windows/notifier_main.cpp)
   target_link_libraries(UsbDlp.LegacyNotifier PRIVATE usb_dlp_legacy_windows)
