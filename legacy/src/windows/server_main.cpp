@@ -118,6 +118,27 @@ std::string utc_after_days(int days) {
   return utc_from_filetime(time);
 }
 
+// 100ns ticks since 1601, the unit FILETIME uses. All time comparisons in this
+// file go through a high-water mark so that setting the clock backwards cannot
+// resurrect an expired grant.
+ULONGLONG current_utc_ticks() {
+  FILETIME time = {};
+  GetSystemTimeAsFileTime(&time);
+  ULARGE_INTEGER ticks = {};
+  ticks.LowPart = time.dwLowDateTime;
+  ticks.HighPart = time.dwHighDateTime;
+  return ticks.QuadPart;
+}
+
+std::string utc_from_ticks(ULONGLONG ticks) {
+  ULARGE_INTEGER value = {};
+  value.QuadPart = ticks;
+  FILETIME time = {};
+  time.dwLowDateTime = value.LowPart;
+  time.dwHighDateTime = value.HighPart;
+  return utc_from_filetime(time);
+}
+
 std::string guid_text() {
   GUID value = {};
   if (CoCreateGuid(&value) != S_OK) return std::string();
@@ -261,17 +282,34 @@ class StateStore {
       const std::wstring& data_directory,
       const std::string& enrollment_token,
       const std::string& admin_password)
-      : secure_store_(data_directory), enrollment_token_hash_(sha256(enrollment_token)),
-        admin_password_hash_(sha256(admin_password)), policy_version_(1) {
+      : secure_store_(data_directory), data_directory_(data_directory),
+        enrollment_token_hash_(sha256(enrollment_token)),
+        admin_password_hash_(sha256(admin_password)), policy_version_(1), state_stamp_(0),
+        time_high_water_ticks_(0) {
     InitializeCriticalSection(&lock_);
   }
 
   ~StateStore() { DeleteCriticalSection(&lock_); }
 
   bool load(std::wstring* error) {
-    if (!secure_store_.exists(L"server-state.dat")) return save(error);
+    if (!secure_store_.exists(L"server-state.dat")) {
+      const bool created = save(error);
+      state_file_stamp(state_path(), &state_stamp_);
+      return created;
+    }
+    return reload_locked(error);
+  }
+
+  // Replaces the in-memory state with the content of server-state.dat. Used both
+  // at startup and whenever another process (the admin CLI) rewrites the file,
+  // so an approval takes effect without restarting the service.
+  bool reload_locked(std::wstring* error = nullptr) {
     std::string encoded;
-    if (!secure_store_.load(L"server-state.dat", &encoded, error)) return false;
+    std::wstring load_error;
+    if (!secure_store_.load(L"server-state.dat", &encoded, &load_error)) {
+      if (error != nullptr) *error = load_error;
+      return false;
+    }
     usb_dlp::JsonValue root;
     std::string parse_error;
     if (!usb_dlp::parse_json(encoded, &root, &parse_error) ||
@@ -283,11 +321,23 @@ class StateStore {
     const usb_dlp::JsonValue* workstations = field(root, "workstations", usb_dlp::JsonValue::Type::array);
     const usb_dlp::JsonValue* requests = field(root, "requests", usb_dlp::JsonValue::Type::array);
     const usb_dlp::JsonValue* grants = field(root, "grants", usb_dlp::JsonValue::Type::array);
-    if (version == nullptr || workstations == nullptr || requests == nullptr || grants == nullptr) return false;
+    if (version == nullptr || workstations == nullptr || requests == nullptr || grants == nullptr) {
+      if (error != nullptr) *error = L"The encrypted server state is missing required fields.";
+      return false;
+    }
+    workstations_.clear();
+    requests_.clear();
+    grants_.clear();
     policy_version_ = version->number_value();
     for (const usb_dlp::JsonValue& value : workstations->array_items()) decode_workstation(value);
     for (const usb_dlp::JsonValue& value : requests->array_items()) decode_request(value);
     for (const usb_dlp::JsonValue& value : grants->array_items()) decode_grant(value);
+    const usb_dlp::JsonValue* high_water = root.find("timeHighWaterTicks");
+    if (high_water != nullptr && high_water->type() == usb_dlp::JsonValue::Type::number) {
+      const ULONGLONG stored = static_cast<ULONGLONG>(high_water->number_value());
+      if (stored > time_high_water_ticks_) time_high_water_ticks_ = stored;
+    }
+    state_file_stamp(state_path(), &state_stamp_);
     return true;
   }
 
@@ -325,7 +375,7 @@ class StateStore {
     if (profile != nullptr && profile->type() == usb_dlp::JsonValue::Type::string) {
       workstation->profile = profile->string_value();
     }
-    workstation->last_seen_utc = utc_now();
+    workstation->last_seen_utc = now_locked();
     std::wstring save_error;
     const bool saved = save_locked(&save_error);
     const std::string workstation_id = workstation->id;
@@ -339,26 +389,27 @@ class StateStore {
             : static_cast<std::int64_t>(1));
     response.object_items()["workstationId"] = usb_dlp::JsonValue(workstation_id);
     response.object_items()["apiCredential"] = usb_dlp::JsonValue(credential);
-    response.object_items()["serverTimeUtc"] = usb_dlp::JsonValue(utc_now());
+    response.object_items()["serverTimeUtc"] = usb_dlp::JsonValue(now_locked());
     response.object_items()["policyPollSeconds"] = usb_dlp::JsonValue(static_cast<std::int64_t>(30));
     return HttpResult{created ? 201 : 200, usb_dlp::write_json(response)};
   }
 
   HttpResult policy(const std::string& bearer) {
     EnterCriticalSection(&lock_);
+    reload_if_changed_locked();
     Workstation* workstation = authenticate_locked(bearer);
     if (workstation == nullptr) {
       LeaveCriticalSection(&lock_);
       return json_error(401, "invalid_credential");
     }
-    workstation->last_seen_utc = utc_now();
+    workstation->last_seen_utc = now_locked();
     usb_dlp::JsonValue response = usb_dlp::JsonValue::object();
     response.object_items()["schemaVersion"] = usb_dlp::JsonValue(static_cast<std::int64_t>(1));
     response.object_items()["policyVersion"] = usb_dlp::JsonValue(policy_version_);
     response.object_items()["groupMode"] = usb_dlp::JsonValue(std::string("default_deny"));
     response.object_items()["entries"] = usb_dlp::JsonValue::array();
     for (const Grant& grant : grants_) {
-      if (grant.workstation_id != workstation->id || grant.expires_at_utc <= utc_now()) continue;
+      if (grant.workstation_id != workstation->id || grant.expires_at_utc <= now_locked()) continue;
       usb_dlp::JsonValue entry = usb_dlp::JsonValue::object();
       entry.object_items()["id"] = usb_dlp::JsonValue(grant.entry_id);
       entry.object_items()["matchType"] = usb_dlp::JsonValue(std::string("instance_id"));
@@ -381,17 +432,18 @@ class StateStore {
 
   HttpResult heartbeat(const std::string& bearer) {
     EnterCriticalSection(&lock_);
+    reload_if_changed_locked();
     Workstation* workstation = authenticate_locked(bearer);
     if (workstation == nullptr) {
       LeaveCriticalSection(&lock_);
       return json_error(401, "invalid_credential");
     }
-    workstation->last_seen_utc = utc_now();
+    workstation->last_seen_utc = now_locked();
     const std::int64_t version = policy_version_;
     LeaveCriticalSection(&lock_);
     usb_dlp::JsonValue response = usb_dlp::JsonValue::object();
     response.object_items()["schemaVersion"] = usb_dlp::JsonValue(static_cast<std::int64_t>(1));
-    response.object_items()["serverTimeUtc"] = usb_dlp::JsonValue(utc_now());
+    response.object_items()["serverTimeUtc"] = usb_dlp::JsonValue(now_locked());
     response.object_items()["policyChanged"] = usb_dlp::JsonValue(true);
     response.object_items()["currentPolicyVersion"] = usb_dlp::JsonValue(version);
     return HttpResult{200, usb_dlp::write_json(response)};
@@ -420,6 +472,7 @@ class StateStore {
       return json_error(422, "invalid_device");
     }
     EnterCriticalSection(&lock_);
+    reload_if_changed_locked();
     Workstation* workstation = authenticate_locked(bearer);
     if (workstation == nullptr) {
       LeaveCriticalSection(&lock_);
@@ -459,6 +512,7 @@ class StateStore {
   HttpResult admin_requests(const std::string& authorization) {
     if (!admin_authorized(authorization)) return json_error(401, "invalid_admin_credential");
     EnterCriticalSection(&lock_);
+    reload_if_changed_locked();
     usb_dlp::JsonValue response = usb_dlp::JsonValue::object();
     response.object_items()["schemaVersion"] = usb_dlp::JsonValue(static_cast<std::int64_t>(1));
     response.object_items()["items"] = usb_dlp::JsonValue::array();
@@ -475,6 +529,7 @@ class StateStore {
   HttpResult admin_workstations(const std::string& authorization) {
     if (!admin_authorized(authorization)) return json_error(401, "invalid_admin_credential");
     EnterCriticalSection(&lock_);
+    reload_if_changed_locked();
     usb_dlp::JsonValue response = usb_dlp::JsonValue::object();
     response.object_items()["schemaVersion"] = usb_dlp::JsonValue(static_cast<std::int64_t>(1));
     response.object_items()["items"] = usb_dlp::JsonValue::array();
@@ -532,6 +587,7 @@ class StateStore {
 
   bool decide(const std::string& request_id, const std::string& decision, int days) {
     EnterCriticalSection(&lock_);
+    reload_if_changed_locked();
     RequestRecord* request = nullptr;
     for (RequestRecord& item : requests_) if (item.id == request_id) request = &item;
     if (request == nullptr || request->status != "pending") {
@@ -545,7 +601,7 @@ class StateStore {
       grant.request_id = request->id;
       grant.workstation_id = request->workstation_id;
       grant.instance_id = request->instance_id;
-      grant.expires_at_utc = utc_after_days(days);
+      grant.expires_at_utc = after_days_locked(days);
       grants_.push_back(grant);
       ++policy_version_;
     }
@@ -557,6 +613,7 @@ class StateStore {
 
   bool revoke(const std::string& request_id) {
     EnterCriticalSection(&lock_);
+    reload_if_changed_locked();
     bool changed = false;
     for (RequestRecord& item : requests_) {
       if (item.id == request_id && item.status == "approved") {
@@ -576,13 +633,59 @@ class StateStore {
 
  private:
   usb_dlp::SecureStore secure_store_;
+  std::wstring data_directory_;
   std::string enrollment_token_hash_;
   std::string admin_password_hash_;
   std::int64_t policy_version_;
   std::vector<Workstation> workstations_;
   std::vector<RequestRecord> requests_;
   std::vector<Grant> grants_;
+  // Detects that server-state.dat was rewritten by another process (the admin
+  // CLI) and reloads it, so approvals no longer require a service restart.
+  ULONGLONG state_stamp_;
+  // Never let a backwards clock change move "now" into the past.
+  ULONGLONG time_high_water_ticks_;
   CRITICAL_SECTION lock_;
+
+  ULONGLONG monotonic_ticks_locked() {
+    const ULONGLONG current = current_utc_ticks();
+    if (current < time_high_water_ticks_) return time_high_water_ticks_;
+    time_high_water_ticks_ = current;
+    return current;
+  }
+
+  std::string now_locked() { return utc_from_ticks(monotonic_ticks_locked()); }
+
+  std::string after_days_locked(int days) {
+    return utc_from_ticks(monotonic_ticks_locked() +
+                          static_cast<ULONGLONG>(days) * 24ULL * 60ULL * 60ULL * 10000000ULL);
+  }
+
+  static bool state_file_stamp(const std::wstring& path, ULONGLONG* stamp) {
+    WIN32_FILE_ATTRIBUTE_DATA info = {};
+    if (!GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &info)) return false;
+    ULARGE_INTEGER written = {};
+    written.LowPart = info.ftLastWriteTime.dwLowDateTime;
+    written.HighPart = info.ftLastWriteTime.dwHighDateTime;
+    // Mask the low nibble: some filesystems only store timestamps at 2s grain.
+    *stamp = (written.QuadPart & ~15ULL) |
+             (static_cast<ULONGLONG>(info.nFileSizeHigh) << 48) |
+             (static_cast<ULONGLONG>(info.nFileSizeLow) << 16);
+    return true;
+  }
+
+  std::wstring state_path() const { return data_directory_ + L"\\server-state.dat"; }
+
+  void reload_if_changed_locked() {
+    ULONGLONG stamp = 0;
+    if (!state_file_stamp(state_path(), &stamp)) return;
+    if (stamp == state_stamp_) return;
+    ULONGLONG previous_stamp = state_stamp_;
+    if (!reload_locked()) {
+      // Leave the in-memory state untouched and retry on the next request.
+      state_stamp_ = previous_stamp;
+    }
+  }
 
   static HttpResult json_error(int status, const std::string& code) {
     usb_dlp::JsonValue value = usb_dlp::JsonValue::object();
@@ -628,6 +731,8 @@ class StateStore {
     usb_dlp::JsonValue root = usb_dlp::JsonValue::object();
     root.object_items()["schemaVersion"] = usb_dlp::JsonValue(static_cast<std::int64_t>(1));
     root.object_items()["policyVersion"] = usb_dlp::JsonValue(policy_version_);
+    root.object_items()["timeHighWaterTicks"] =
+        usb_dlp::JsonValue(static_cast<std::int64_t>(time_high_water_ticks_));
     root.object_items()["workstations"] = usb_dlp::JsonValue::array();
     root.object_items()["requests"] = usb_dlp::JsonValue::array();
     root.object_items()["grants"] = usb_dlp::JsonValue::array();
@@ -640,7 +745,9 @@ class StateStore {
     for (const Grant& item : grants_) {
       root.object_items()["grants"].array_items().push_back(grant_json(item));
     }
-    return secure_store_.save(L"server-state.dat", usb_dlp::write_json(root), error);
+    const bool saved = secure_store_.save(L"server-state.dat", usb_dlp::write_json(root), error);
+    if (saved) state_file_stamp(state_path(), &state_stamp_);
+    return saved;
   }
 
   void decode_workstation(const usb_dlp::JsonValue& value) {
@@ -880,6 +987,20 @@ void send_http(SOCKET socket, const HttpResult& result) {
   send(socket, response.data(), static_cast<int>(response.size()), 0);
 }
 
+// Defaults to loopback: the single-machine deployment runs the server on the
+// same box as the agent, and binding 0.0.0.0 exposes the admin API to the whole
+// LAN over plain HTTP. Set USBDLP_SERVER_BIND=0.0.0.0 to serve other machines.
+u_long listen_address() {
+  wchar_t value[64] = {};
+  const DWORD length = GetEnvironmentVariableW(L"USBDLP_SERVER_BIND", value, 64);
+  if (length == 0 || length >= 64) return htonl(INADDR_LOOPBACK);
+  const std::string text = usb_dlp::wide_to_utf8(value);
+  if (text.empty() || text == "0.0.0.0") return text.empty() ? htonl(INADDR_LOOPBACK) : htonl(INADDR_ANY);
+  const unsigned long parsed = inet_addr(text.c_str());
+  if (parsed == INADDR_NONE) return htonl(INADDR_LOOPBACK);
+  return parsed;
+}
+
 int serve(StateStore* store, unsigned short port, HANDLE stop_event) {
   WSADATA data = {};
   if (WSAStartup(MAKEWORD(2, 2), &data) != 0) return ERROR_NETWORK_UNREACHABLE;
@@ -887,7 +1008,7 @@ int serve(StateStore* store, unsigned short port, HANDLE stop_event) {
   if (listener == INVALID_SOCKET) { WSACleanup(); return ERROR_OPEN_FAILED; }
   sockaddr_in address = {};
   address.sin_family = AF_INET;
-  address.sin_addr.s_addr = htonl(INADDR_ANY);
+  address.sin_addr.s_addr = listen_address();
   address.sin_port = htons(port);
   if (bind(listener, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == SOCKET_ERROR ||
       listen(listener, SOMAXCONN) == SOCKET_ERROR) {
