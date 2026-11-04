@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param()
 
 $ErrorActionPreference = "Stop"
@@ -46,6 +46,12 @@ Copy-Item -LiteralPath $driver -Destination (Join-Path $destination "driver")
 Copy-Item -LiteralPath $helper -Destination (Join-Path $destination "driver")
 Move-Item -LiteralPath (Join-Path $destination "client\install-client.cmd") `
     -Destination (Join-Path $destination "client\install-agent-inner.cmd")
+$bootfix = Join-Path $PSScriptRoot "..\legacy\packaging\bootfix"
+foreach ($script in @("fix-xp-boot.cmd", "verify-xp-boot.cmd", "recover-offline.cmd")) {
+    $from = Join-Path $bootfix $script
+    if (-not (Test-Path -LiteralPath $from)) { throw "Missing boot-fix script: $from" }
+    Copy-Item -LiteralPath $from -Destination (Join-Path $destination "client")
+}
 
 $install = @'
 @echo off
@@ -67,6 +73,23 @@ set "HELPER=%~dp0..\driver\UsbDlp.XpFilterSetup.exe"
 if errorlevel 1 (
   echo Filter registration failed. No agent was installed.
   exit /b 4
+)
+rem The filter is listed in the disk class UpperFilters from this point on.
+rem A non BOOT_START service, or a missing load-order Group, makes the next
+rem boot stop with 0x7B. Normalise and verify by registry read-back before the
+rem agent is installed and before the operator may be told to restart.
+echo Normalising the filter boot configuration.
+call "%~dp0fix-xp-boot.cmd"
+if errorlevel 1 (
+  echo BOOT CONFIGURATION FAILED. DO NOT RESTART THIS MACHINE.
+  "%HELPER%" uninstall
+  exit /b 7
+)
+call "%~dp0verify-xp-boot.cmd"
+if errorlevel 1 (
+  echo BOOT SAFETY CHECK FAILED. DO NOT RESTART THIS MACHINE.
+  "%HELPER%" uninstall
+  exit /b 7
 )
 call "%~dp0install-agent-inner.cmd"
 if errorlevel 1 (
@@ -139,6 +162,11 @@ $manifest = @(
     "Transport=HTTP_ISOLATED_TEST_ONLY",
     "AgentMode=LIVE_DEFAULT_DENY",
     "EnforcementBackend=USBSTOR_disk_class_upper_filter",
+    "DriverStart=SERVICE_BOOT_START",
+    "DriverLoadOrderGroup=System Bus Extender",
+    "BootHealingStep=client/fix-xp-boot.cmd",
+    "BootSafetyCheck=client/verify-xp-boot.cmd",
+    "OfflineRescue=client/recover-offline.cmd",
     "AgentVersion=1.1.8",
     "ServerVersion=1.1.2",
     "Driver=RuisiUsbDlpFilter.sys",
@@ -153,6 +181,10 @@ $guide = @(
     "READ FIRST: Windows XP SP3 x86 KERNEL FILTER LAB TRACK. NOT PRODUCTION DLP.",
     "Only use a dedicated XP SP3 x86 NTFS VM or sacrificial lab PC with a full snapshot/image.",
     "A disk-class filter can make XP unbootable if installation or removal fails.",
+    "The filter service must be BOOT_START in load-order group 'System Bus Extender'.",
+    "SERVICE_DEMAND_START with the filter in UpperFilters stops the machine with 0x7B on the next boot.",
+    "Always run client/fix-xp-boot.cmd and client/verify-xp-boot.cmd before the first reboot;",
+    "verify must print BOOT_SAFETY=SAFE. Do not restart otherwise.",
     "Keep XP recovery media and a backup of test data. Do not use on a production machine.",
     "Use a CLEAN XP snapshot; do not mix this track with HF7 or SetupAPI builds.",
     "Edit config/deployment.ini ServerUrl and replace the test enrollment token and admin password.",
@@ -168,7 +200,8 @@ $guide = @(
     "Test internal disk, keyboard, mouse, USB hub and non-storage devices still work.",
     "Send complete agent log, XP Event Viewer System log, Device Manager state and timestamped test record.",
     "To rollback: run client/rollback-client.cmd as Administrator, REBOOT, confirm disk access.",
-    "If XP does not boot, restore the snapshot or use recovery media to remove the UpperFilters entry.",
+    "If XP does not boot, restore the snapshot, or attach the disk to a working machine and run",
+    "client/recover-offline.cmd [drive]:\WINDOWS to reset UpperFilters and disable the service.",
     "Any bypass, crash, boot issue or unverified state fails this track. Stop testing and report it.",
     "The prior 1.1.7 build did not produce any verified block in the supplied tester log."
 )
