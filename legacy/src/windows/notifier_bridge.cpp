@@ -1,5 +1,6 @@
 #include "usb_dlp/notifier_bridge.h"
 
+#include "usb_dlp/approval.h"
 #include "usb_dlp/json.h"
 
 #include <sddl.h>
@@ -16,6 +17,15 @@ namespace usb_dlp {
 namespace {
 
 const wchar_t* const kPipeName = L"\\\\.\\pipe\\UsbDlp.LegacyAgent.Notifier.v1";
+
+// A successfully disabled device leaves the enumeration, so no further updates
+// arrive for it. Re-open the prompt on this interval while the block still
+// stands, so a device that is plugged in but silent always explains itself.
+const DWORD kRelaunchIntervalMs = 120U * 1000U;
+
+// After the user submits an access request, stop prompting for that device for
+// a while. Prompting again immediately would look like the request was lost.
+const DWORD kSuppressAfterRequestMs = 30U * 60U * 1000U;
 
 class ScopedHandle {
  public:
@@ -56,6 +66,16 @@ JsonValue device_message(const WindowsDevice& device) {
   value.object_items()["vid"] = JsonValue(device.policy_device.vid);
   value.object_items()["pid"] = JsonValue(device.policy_device.pid);
   return value;
+}
+
+// Every USB storage disk also enumerates a WPD mirror node
+// (SWD\WPDBUSENUM\...) whose friendly name is just a drive letter and which
+// carries no VID/PID. It is handled after the disk node, so letting it take
+// over the prompt replaced the device name with "F:\", blanked the identifier
+// and flipped the headline to "block not confirmed". Treat such a node as a
+// weaker identity that must not overwrite a node that has real IDs.
+bool has_strong_identity(const WindowsDevice& device) {
+  return !device.policy_device.vid.empty() && !device.policy_device.pid.empty();
 }
 
 std::string error_response(const std::string& event_id, const std::wstring& message) {
@@ -140,7 +160,8 @@ bool query_interactive_user_token(DWORD session_id, HANDLE* token) {
 
 NotifierBridge::NotifierBridge(LegacyAgentApi* api, const std::wstring& notifier_path)
     : api_(api), notifier_path_(notifier_path), stop_event_(nullptr), thread_(nullptr),
-      has_identity_(false), current_enforcement_verified_(false), has_current_(false) {
+      has_identity_(false), current_enforcement_verified_(false), has_current_(false),
+      last_launch_ms_(0), approval_handler_(nullptr), approval_context_(nullptr) {
   InitializeCriticalSection(&lock_);
 }
 
@@ -184,35 +205,73 @@ void NotifierBridge::set_identity(const AgentIdentity& identity) {
   LeaveCriticalSection(&lock_);
 }
 
+void NotifierBridge::set_approval_handler(ApprovalHandler handler, void* context) {
+  EnterCriticalSection(&lock_);
+  approval_handler_ = handler;
+  approval_context_ = context;
+  LeaveCriticalSection(&lock_);
+}
+
 void NotifierBridge::publish_denied(
     const WindowsDevice& device,
     const std::string& reason_code,
     bool enforcement_verified,
     bool newly_present) {
+  bool launch = false;
   EnterCriticalSection(&lock_);
-  if (newly_present) {
+  const DWORD now = GetTickCount();
+  std::map<std::wstring, DWORD>::iterator suppression = suppress_until_ms_.find(device.instance_id);
+  if (suppression != suppress_until_ms_.end()) {
+    if (static_cast<LONG>(now - suppression->second) < 0) {
+      // The user already asked for access to this device. Prompting again while
+      // the request is pending reads as "my request was lost".
+      LeaveCriticalSection(&lock_);
+      return;
+    }
+    suppress_until_ms_.erase(suppression);
+  }
+  const bool same_device =
+      has_current_ && _wcsicmp(current_device_.instance_id.c_str(), device.instance_id.c_str()) == 0;
+  if (same_device && !newly_present) {
+    current_enforcement_verified_ = enforcement_verified;
+    // The prompt is the only feedback the user gets about a blocked device, and
+    // they may close it before reading. Re-open it on an interval while the
+    // block still stands instead of firing once and hoping it was seen.
+    if (now - last_launch_ms_ >= kRelaunchIntervalMs) launch = true;
+  } else if (has_current_ && !has_strong_identity(device) && has_strong_identity(current_device_)) {
+    // A drive-letter-only mirror node arrived for a device that already has a
+    // fully identified entry in the prompt. Keep the better description.
+    LeaveCriticalSection(&lock_);
+    return;
+  } else {
     current_device_ = device;
     current_event_id_ = new_guid_text();
     current_reason_code_ = reason_code;
-    has_current_ = true;
-  }
-  if (has_current_ && _wcsicmp(current_device_.instance_id.c_str(), device.instance_id.c_str()) == 0) {
     current_enforcement_verified_ = enforcement_verified;
+    has_current_ = true;
+    launch = true;
   }
+  if (launch) last_launch_ms_ = now;
   LeaveCriticalSection(&lock_);
-  if (newly_present) launch_notifier();
+  if (launch) launch_notifier();
 }
 
 void NotifierBridge::publish_allowed(const std::wstring& instance_id) {
-  publish_removed(instance_id);
-}
-
-void NotifierBridge::publish_removed(const std::wstring& instance_id) {
   EnterCriticalSection(&lock_);
+  suppress_until_ms_.erase(instance_id);
   if (has_current_ && _wcsicmp(current_device_.instance_id.c_str(), instance_id.c_str()) == 0) {
     has_current_ = false;
   }
   LeaveCriticalSection(&lock_);
+}
+
+void NotifierBridge::publish_removed(const std::wstring& instance_id) {
+  // A successful block removes the device from the enumeration, which is exactly
+  // the event that used to clear the prompt. Clearing it here made the window
+  // disappear in under a second, before the user could read it or submit a
+  // request. Keep the prompt until the device is allowed or replaced; the
+  // notifier closes itself after its own idle grace period.
+  (void)instance_id;
 }
 
 DWORD WINAPI NotifierBridge::thread_entry(void* context) {
@@ -248,6 +307,10 @@ std::string NotifierBridge::current_message() {
     response.object_items()["reasonCode"] = JsonValue(current_reason_code_);
     response.object_items()["enforcementVerified"] = JsonValue(current_enforcement_verified_);
     response.object_items()["device"] = device_message(current_device_);
+    // The code the user reads out to IT. Computed here so the prompt never has
+    // to know how a code is derived.
+    response.object_items()["deviceCode"] = JsonValue(
+        device_code_display(wide_to_utf8(current_device_.instance_id)));
   } else {
     response.object_items()["type"] = JsonValue(std::string("none"));
   }
@@ -266,6 +329,38 @@ std::string NotifierBridge::handle_request(const std::string& request) {
     return error_response(std::string(), L"The notifier request type is missing.");
   }
   if (type->string_value() == "get") return current_message();
+  if (type->string_value() == "submit_code") {
+    const JsonValue* code = parsed.find("code");
+    if (code == nullptr || code->type() != JsonValue::Type::string) {
+      return error_response(std::string(), L"Approval code is missing.");
+    }
+    std::wstring instance_id;
+    ApprovalHandler handler = nullptr;
+    void* context = nullptr;
+    EnterCriticalSection(&lock_);
+    if (has_current_) instance_id = current_device_.instance_id;
+    handler = approval_handler_;
+    context = approval_context_;
+    LeaveCriticalSection(&lock_);
+
+    JsonValue response = JsonValue::object();
+    response.object_items()["type"] = JsonValue(std::string("approval_result"));
+    if (handler == nullptr) {
+      response.object_items()["accepted"] = JsonValue(false);
+      response.object_items()["message"] = JsonValue(std::string("approval_unavailable"));
+      return write_json(response);
+    }
+    if (instance_id.empty()) {
+      response.object_items()["accepted"] = JsonValue(false);
+      response.object_items()["message"] = JsonValue(std::string("no_blocked_device"));
+      return write_json(response);
+    }
+    std::string message;
+    const bool accepted = handler(context, instance_id, code->string_value(), &message);
+    response.object_items()["accepted"] = JsonValue(accepted);
+    response.object_items()["message"] = JsonValue(message);
+    return write_json(response);
+  }
   if (type->string_value() != "request_access") {
     return error_response(std::string(), L"The notifier request type is unsupported.");
   }
@@ -301,6 +396,14 @@ std::string NotifierBridge::handle_request(const std::string& request) {
                             justification->string_value(), &result, &error)) {
     return error_response(event->string_value(), error);
   }
+  // The user has now been told what happened and has asked for access, so stop
+  // re-opening the prompt for this device while the request is in flight.
+  EnterCriticalSection(&lock_);
+  suppress_until_ms_[device.instance_id] = GetTickCount() + kSuppressAfterRequestMs;
+  if (has_current_ && _wcsicmp(current_device_.instance_id.c_str(), device.instance_id.c_str()) == 0) {
+    has_current_ = false;
+  }
+  LeaveCriticalSection(&lock_);
   JsonValue response = JsonValue::object();
   response.object_items()["type"] = JsonValue(std::string("request_result"));
   response.object_items()["eventId"] = JsonValue(event->string_value());

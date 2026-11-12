@@ -1,12 +1,20 @@
 #include "usb_dlp/agent_api.h"
+#include "usb_dlp/approval.h"
+#include "usb_dlp/approval_key.h"
+#include "usb_dlp/crypto.h"
 #include "usb_dlp/json.h"
 #include "usb_dlp/notifier_bridge.h"
 #include "usb_dlp/policy.h"
 #include "usb_dlp/policy_json.h"
 #include "usb_dlp/secure_store.h"
 #include "usb_dlp/windows_device.h"
+#ifndef USB_DLP_LEGACY_XP
+#include "usb_dlp/policy_registry.h"
+#endif
 
 #include <windows.h>
+#include <wincrypt.h>
+#include <cfgmgr32.h>
 
 #include <algorithm>
 #include <cstdio>
@@ -25,7 +33,9 @@ namespace {
 // Stamped by CMake at configure time so every log line identifies the binary
 // that produced it. Two hours were lost today guessing which build was running.
 #ifndef USB_DLP_BUILD_STAMP
-#define USB_DLP_BUILD_STAMP "unstamped"
+// __DATE__/__TIME__ are evaluated at compile time, so the stamp always matches
+// the binary that was actually built - unlike a configure-time timestamp.
+#define USB_DLP_BUILD_STAMP __DATE__ " " __TIME__
 #endif
 
 const wchar_t* const kServiceName = L"UsbDlp.LegacyAgent";
@@ -249,7 +259,7 @@ int configure_agent(
                   data_directory.c_str(), GetLastError());
     return ERROR_WRITE_FAULT;
   }
-  const std::wstring ini_contents =
+  std::wstring ini_contents =
       L"[Agent]\r\n"
       L"DryRun=0\r\n"
       L"DebugLog=" + debug_log + L"\r\n"
@@ -258,6 +268,11 @@ int configure_agent(
       L"EnrollmentTokenFile=" + token_destination + L"\r\n"
       L"LocalPollSeconds=2\r\n"
       L"PolicyPollSeconds=30\r\n";
+#ifndef USB_DLP_LEGACY_XP
+  // XP has no Device Installation Restrictions layer, so the knob would only
+  // advertise an option the binary cannot honour.
+  ini_contents += L"Backstop=1\r\n";
+#endif
   if (!usb_dlp::write_utf16_text_file(
           join_path(data_directory, L"legacy-agent.ini"), ini_contents, &error)) {
     std::fwprintf(stderr, L"configure_failed data_directory=\"%ls\" error=\"%ls\"\n",
@@ -442,6 +457,390 @@ int restore_owned_devices() {
   return owned.empty() ? 0 : ERROR_DEVICE_NOT_CONNECTED;
 }
 
+// ---------------------------------------------------------------------------
+// Offline approval
+// ---------------------------------------------------------------------------
+
+// A disabled device stays in the enumeration store but drops out of a
+// present-only scan, so the agent loses sight of devices it blocked itself.
+// CM_Locate_DevNode still finds it, which is what separates "blocked and still
+// plugged in" from "unplugged".
+bool device_is_present(const std::wstring& instance_id) {
+  DEVINST node = 0;
+  if (CM_Locate_DevNodeW(&node, const_cast<DEVINSTID_W>(instance_id.c_str()),
+                         CM_LOCATE_DEVNODE_NORMAL) != CR_SUCCESS) {
+    if (CM_Locate_DevNodeW(&node, const_cast<DEVINSTID_W>(instance_id.c_str()),
+                           CM_LOCATE_DEVNODE_PHANTOM) != CR_SUCCESS) {
+      return false;
+    }
+  }
+  ULONG status = 0;
+  ULONG problem = 0;
+  return CM_Get_DevNode_Status(&status, &problem, node, 0) == CR_SUCCESS;
+}
+
+// A WPD mirror node's instance id embeds its parent disk id:
+//   SWD\WPDBUSENUM\_??_USBSTOR#DISK&VEN_X#123&0#{GUID}
+// must map to
+//   USBSTOR\DISK&VEN_X\123&0
+// Approving only the disk left the mirror blocked, so the device still worked
+// while the prompt kept claiming it was blocked.
+bool is_wpd_mirror(const std::wstring& instance_id) {
+  return instance_id.find(L"WPDBUSENUM") != std::wstring::npos;
+}
+
+std::wstring wpd_parent_instance_id(const std::wstring& instance_id) {
+  const std::wstring marker = L"_??_";
+  const std::size_t marker_at = instance_id.find(marker);
+  if (marker_at == std::wstring::npos) return std::wstring();
+  std::wstring rest = instance_id.substr(marker_at + marker.size());
+  const std::size_t guid_at = rest.find(L"#{");
+  if (guid_at != std::wstring::npos) rest.resize(guid_at);
+  const std::size_t first = rest.find(L'#');
+  if (first == std::wstring::npos) return std::wstring();
+  const std::size_t last = rest.rfind(L'#');
+  if (last == first) return std::wstring();
+  rest[first] = L'\\';
+  rest[last] = L'\\';
+  return rest;
+}
+
+// True when the policy holds a live allow entry for exactly this instance.
+bool policy_allows_instance(const usb_dlp::CompiledPolicy& policy, const std::wstring& instance_id,
+                            std::int64_t now_utc_ms) {
+  const std::string target = usb_dlp::wide_to_utf8(instance_id);
+  for (const usb_dlp::DeviceEntry& entry : policy.entries) {
+    if (entry.action != usb_dlp::EntryAction::allow) continue;
+    if (entry.match_type != usb_dlp::MatchType::instance_id) continue;
+    if (entry.instance_id != target) continue;
+    if (entry.has_expiry && entry.expires_at_utc_ms <= now_utc_ms) continue;
+    return true;
+  }
+  return false;
+}
+
+// Offline grants are kept apart from policy.dat, which stores the verbatim
+// payload pushed by the server. Mixing the two would make the next policy poll
+// silently discard every locally approved device.
+std::vector<usb_dlp::DeviceEntry> parse_approval_entries(const std::string& text) {
+  std::vector<usb_dlp::DeviceEntry> entries;
+  std::size_t start = 0;
+  while (start < text.size()) {
+    const std::size_t end = text.find('\n', start);
+    const std::string line =
+        text.substr(start, end == std::string::npos ? std::string::npos : end - start);
+    start = end == std::string::npos ? text.size() : end + 1;
+    if (line.empty()) continue;
+    const std::size_t first = line.find('\t');
+    if (first == std::string::npos) continue;
+    const std::size_t second = line.find('\t', first + 1);
+    usb_dlp::DeviceEntry entry;
+    entry.instance_id = line.substr(0, first);
+    entry.expires_at_utc_ms = std::strtoll(line.c_str() + first + 1, nullptr, 10);
+    entry.id = second == std::string::npos ? std::string() : line.substr(second + 1);
+    if (entry.id.empty()) entry.id = "offline";
+    entry.match_type = usb_dlp::MatchType::instance_id;
+    entry.action = usb_dlp::EntryAction::allow;
+    entry.scope_type = usb_dlp::ScopeType::global;
+    entry.has_expiry = true;
+    if (!entry.instance_id.empty()) entries.push_back(entry);
+  }
+  return entries;
+}
+
+// Replay protection has to outlive the process, otherwise a used code becomes
+// valid again the moment the service restarts. Entries carry their own expiry
+// so the file cannot grow without bound.
+void load_used_codes(usb_dlp::SecureStore& store, std::int64_t now_ms,
+                     std::map<std::string, std::int64_t>* codes) {
+  std::string text;
+  std::wstring error;
+  if (!store.load(L"used-codes.dat", &text, &error)) return;
+  std::size_t start = 0;
+  while (start < text.size()) {
+    const std::size_t end = text.find('\n', start);
+    const std::string line =
+        text.substr(start, end == std::string::npos ? std::string::npos : end - start);
+    start = end == std::string::npos ? text.size() : end + 1;
+    const std::size_t tab = line.find('\t');
+    if (tab == std::string::npos) continue;
+    const std::int64_t expires = std::strtoll(line.c_str() + tab + 1, nullptr, 10);
+    if (expires <= now_ms) continue;
+    (*codes)[line.substr(0, tab)] = expires;
+  }
+}
+
+std::string serialize_used_codes(const std::map<std::string, std::int64_t>& codes,
+                                 std::int64_t now_ms) {
+  std::string text;
+  for (std::map<std::string, std::int64_t>::const_iterator it = codes.begin();
+       it != codes.end(); ++it) {
+    if (it->second <= now_ms) continue;
+    text += it->first;
+    text += '\t';
+    text += std::to_string(it->second);
+    text += '\n';
+  }
+  return text;
+}
+
+std::string serialize_approval_entries(const std::vector<usb_dlp::DeviceEntry>& entries) {
+  std::string text;
+  for (const usb_dlp::DeviceEntry& entry : entries) {
+    text += entry.instance_id;
+    text += '\t';
+    text += std::to_string(entry.expires_at_utc_ms);
+    text += '\t';
+    text += entry.id;
+    text += '\n';
+  }
+  return text;
+}
+
+// Monotonic wall clock. An approval code carries its own validity window, so
+// the endpoint has to decide "has this expired" against a time the user cannot
+// simply set backwards. The high-water mark is persisted, otherwise a reboot
+// would reset it and a clock rollback could revive an expired grant.
+class TrustedClock {
+ public:
+  TrustedClock() : high_water_ms_(0), last_saved_ms_(0) {
+    InitializeCriticalSection(&lock_);
+  }
+  ~TrustedClock() { DeleteCriticalSection(&lock_); }
+
+  TrustedClock(const TrustedClock&) = delete;
+  TrustedClock& operator=(const TrustedClock&) = delete;
+
+  void initialize(const std::wstring& data_directory) {
+    data_directory_ = data_directory;
+    usb_dlp::SecureStore store(data_directory);
+    std::string stored;
+    std::wstring error;
+    if (!store.load(L"clock.dat", &stored, &error)) return;
+    char* end = nullptr;
+    const long long value = std::strtoll(stored.c_str(), &end, 10);
+    if (end == nullptr || end == stored.c_str() || value <= 0) return;
+    high_water_ms_ = static_cast<std::int64_t>(value);
+    last_saved_ms_ = high_water_ms_;
+  }
+
+  // Feeds a raw system time and returns the instant policy should be judged
+  // against: never earlier than anything already observed.
+  std::int64_t apply(std::int64_t raw_ms, bool* rolled_back, std::int64_t* previous_ms) {
+    bool changed = false;
+    std::int64_t result = raw_ms;
+    EnterCriticalSection(&lock_);
+    if (raw_ms + 2000 < high_water_ms_) {
+      if (rolled_back != nullptr) *rolled_back = true;
+      if (previous_ms != nullptr) *previous_ms = high_water_ms_;
+      result = high_water_ms_;
+    } else {
+      if (rolled_back != nullptr) *rolled_back = false;
+      if (raw_ms > high_water_ms_) {
+        high_water_ms_ = raw_ms;
+        changed = true;
+      }
+      result = high_water_ms_;
+    }
+    const bool should_save = changed && (high_water_ms_ - last_saved_ms_ >= 60000);
+    const std::int64_t value_to_save = high_water_ms_;
+    LeaveCriticalSection(&lock_);
+
+    if (should_save) {
+      usb_dlp::SecureStore store(data_directory_);
+      std::wstring error;
+      if (store.save(L"clock.dat", std::to_string(value_to_save), &error)) {
+        EnterCriticalSection(&lock_);
+        last_saved_ms_ = value_to_save;
+        LeaveCriticalSection(&lock_);
+      }
+    }
+    return result;
+  }
+
+  // Current trusted instant, for code validation outside the poll loop.
+  std::int64_t now_ms() const {
+    FILETIME file_time = {};
+    GetSystemTimeAsFileTime(&file_time);
+    ULARGE_INTEGER ticks = {};
+    ticks.LowPart = file_time.dwLowDateTime;
+    ticks.HighPart = file_time.dwHighDateTime;
+    const std::int64_t raw_ms =
+        static_cast<std::int64_t>((ticks.QuadPart - 116444736000000000ULL) / 10000ULL);
+    EnterCriticalSection(&lock_);
+    const std::int64_t value = high_water_ms_ > raw_ms ? high_water_ms_ : raw_ms;
+    LeaveCriticalSection(&lock_);
+    return value;
+  }
+
+ private:
+  mutable CRITICAL_SECTION lock_;
+  std::wstring data_directory_;
+  std::int64_t high_water_ms_;
+  std::int64_t last_saved_ms_;
+};
+
+struct ApprovalState {
+  usb_dlp::SecureStore* store = nullptr;
+  TrustedClock* clock = nullptr;
+  usb_dlp::WindowsDeviceEnforcer* enforcer = nullptr;
+  std::wstring data_directory;
+  CRITICAL_SECTION lock = {};
+  std::vector<usb_dlp::DeviceEntry> pending;
+  std::map<std::string, std::int64_t> used_codes;
+  std::vector<std::uint8_t> short_key;
+  bool short_code_enabled = true;
+};
+
+// Loads the per-device short-code key, creating it on first run. Each endpoint
+// gets its own key so that extracting one does not compromise the fleet.
+bool load_short_code_key(const std::wstring& data_directory, std::vector<std::uint8_t>* key,
+                         std::wstring* error) {
+  usb_dlp::SecureStore store(data_directory);
+  std::string stored;
+  if (store.load(L"short-key.dat", &stored, error)) {
+    std::vector<std::uint8_t> decoded;
+    if (usb_dlp::crypto::base32_decode(stored, &decoded) && decoded.size() == 32) {
+      *key = decoded;
+      return true;
+    }
+    log_line(data_directory, L"short_key_invalid regenerating=true");
+  }
+
+  std::vector<std::uint8_t> fresh(32);
+  HCRYPTPROV provider = 0;
+  bool generated = false;
+  if (CryptAcquireContextW(&provider, nullptr, nullptr, PROV_RSA_FULL, CRYPT_VERIFYCONTEXT)) {
+    generated = CryptGenRandom(provider, static_cast<DWORD>(fresh.size()), &fresh[0]) != FALSE;
+    CryptReleaseContext(provider, 0);
+  }
+  if (!generated) {
+    if (error != nullptr) *error = L"Could not generate a short-code key.";
+    return false;
+  }
+  const std::string encoded = usb_dlp::crypto::base32_encode(&fresh[0], fresh.size());
+  if (!store.save(L"short-key.dat", encoded, error)) return false;
+  *key = fresh;
+  log_line(data_directory, L"short_key_created");
+  return true;
+}
+
+// Runs on the notifier pipe thread. It may only append to `pending`; the poll
+// loop owns the live policy and applies grants on its next iteration.
+bool handle_approval_code(void* context, const std::wstring& instance_id,
+                          const std::string& code, std::string* message) {
+  ApprovalState* state = static_cast<ApprovalState*>(context);
+  const std::string instance_utf8 = usb_dlp::wide_to_utf8(instance_id);
+  const std::int64_t now_ms = state->clock->now_ms();
+
+  std::vector<std::uint8_t> decoded;
+  if (!usb_dlp::crypto::base32_decode(code, &decoded)) {
+    *message = "invalid_format";
+    // Log enough to tell a bad character apart from a truncated paste, without
+    // ever writing the code itself.
+    std::string sample;
+    for (std::size_t index = 0; index < code.size() && index < 8; ++index) {
+      const unsigned char value = static_cast<unsigned char>(code[index]);
+      sample.push_back(value >= 0x20 && value < 0x7F ? static_cast<char>(value) : '?');
+    }
+    log_line(state->data_directory,
+             L"approval_decode_failed length=" + std::to_wstring(code.size()) +
+                 L" head=" + usb_dlp::utf8_to_wide(sample));
+    return false;
+  }
+
+  usb_dlp::ApprovalGrant grant;
+  usb_dlp::ApprovalError error = usb_dlp::ApprovalError::none;
+  bool accepted = false;
+  if (decoded.size() == usb_dlp::kSignedCodeBytes) {
+    const std::uint8_t* bytes = usb_dlp::approval_modulus();
+    const std::vector<std::uint8_t> modulus(bytes, bytes + 256);
+    accepted = usb_dlp::verify_signed_approval_code(code, modulus, instance_utf8, now_ms, &grant,
+                                                    &error);
+  } else if (decoded.size() == 15) {
+    if (!state->short_code_enabled) {
+      *message = "short_code_disabled";
+      return false;
+    }
+    if (state->short_key.empty()) {
+      *message = "short_key_missing";
+      return false;
+    }
+    accepted = usb_dlp::verify_short_approval_code(code, state->short_key, instance_utf8, now_ms,
+                                                   &grant, &error);
+  } else {
+    *message = "invalid_format";
+    log_line(state->data_directory,
+             L"approval_bad_length decoded_bytes=" + std::to_wstring(decoded.size()));
+    return false;
+  }
+
+  if (!accepted) {
+    *message = usb_dlp::approval_error_name(error);
+    log_line(state->data_directory,
+             L"approval_rejected instance_id=" + instance_id + L" result=" +
+                 usb_dlp::utf8_to_wide(usb_dlp::approval_error_name(error)) +
+                 L" code=" + usb_dlp::utf8_to_wide(usb_dlp::approval_code_fingerprint(code).substr(0, 16)));
+    return false;
+  }
+
+  const std::string fingerprint = usb_dlp::approval_code_fingerprint(code);
+  bool replay = false;
+  std::string used_codes_text;
+  EnterCriticalSection(&state->lock);
+  std::map<std::string, std::int64_t>::const_iterator seen = state->used_codes.find(fingerprint);
+  replay = seen != state->used_codes.end() && seen->second > now_ms;
+  if (!replay) {
+    usb_dlp::DeviceEntry entry;
+    entry.id = "offline-" + fingerprint.substr(0, 16);
+    entry.match_type = usb_dlp::MatchType::instance_id;
+    entry.instance_id = instance_utf8;
+    entry.action = usb_dlp::EntryAction::allow;
+    entry.scope_type = usb_dlp::ScopeType::global;
+    entry.has_expiry = true;
+    entry.expires_at_utc_ms = grant.not_after_utc_ms;
+    state->pending.push_back(entry);
+    state->used_codes[fingerprint] = grant.not_after_utc_ms;
+    used_codes_text = serialize_used_codes(state->used_codes, now_ms);
+  }
+  LeaveCriticalSection(&state->lock);
+
+  if (!used_codes_text.empty() && state->store != nullptr) {
+    std::wstring save_error;
+    if (!state->store->save(L"used-codes.dat", used_codes_text, &save_error)) {
+      log_line(state->data_directory, L"used_codes_save_error " + save_error);
+    }
+  }
+
+  if (replay) {
+    *message = "replay";
+    return false;
+  }
+
+  *message = grant.signed_code ? "ok_signed" : "ok_short";
+  log_line(state->data_directory,
+           L"approval_accepted instance_id=" + instance_id +
+               L" kind=" + std::wstring(grant.signed_code ? L"signed" : L"short") +
+               L" duration_h=" + std::to_wstring(grant.duration_hours) +
+               L" code=" + usb_dlp::utf8_to_wide(fingerprint.substr(0, 16)));
+
+  // A disabled device is gone from the enumeration, so the polling loop can
+  // never see it again on its own. Re-enable the node directly, otherwise the
+  // grant would only take effect after the user unplugged and replugged.
+  if (state->enforcer != nullptr) {
+    unsigned long enable_result = 0;
+    if (state->enforcer->enable(instance_id, &enable_result)) {
+      log_line(state->data_directory, L"approval_devnode_enabled instance_id=" + instance_id);
+    } else {
+      log_line(state->data_directory,
+               L"approval_devnode_enable_failed instance_id=" + instance_id +
+                   L" result=" + std::to_wstring(enable_result));
+      *message = grant.signed_code ? "ok_replug_signed" : "ok_replug_short";
+    }
+  }
+  return true;
+}
+
 int run_agent(HANDLE stop_event) {
   const std::wstring common_data = usb_dlp::common_application_data_path();
   if (common_data.empty()) return ERROR_PATH_NOT_FOUND;
@@ -494,6 +893,43 @@ int run_agent(HANDLE stop_event) {
   if (!notifier.start(&storage_error)) {
     log_line(data_directory, L"notifier_pipe_error " + storage_error);
   }
+
+  // Offline approval: trusted clock, per-device short-code key, grant channel.
+  TrustedClock trusted_clock;
+  trusted_clock.initialize(data_directory);
+  {
+    std::string approvals_text;
+    if (secure_store.load(L"approvals.dat", &approvals_text, &storage_error)) {
+      const std::vector<usb_dlp::DeviceEntry> restored = parse_approval_entries(approvals_text);
+      for (const usb_dlp::DeviceEntry& entry : restored) policy.entries.push_back(entry);
+      if (!restored.empty()) {
+        log_line(data_directory, L"approvals_restored count=" + std::to_wstring(restored.size()));
+      }
+    }
+  }
+  ApprovalState approval_state;
+  approval_state.store = &secure_store;
+  approval_state.clock = &trusted_clock;
+  approval_state.enforcer = &enforcer;
+  approval_state.data_directory = data_directory;
+  approval_state.short_code_enabled = read_bool(ini, L"ShortCode", true);
+  InitializeCriticalSection(&approval_state.lock);
+  load_used_codes(secure_store, trusted_clock.now_ms(), &approval_state.used_codes);
+  if (approval_state.short_code_enabled) {
+    std::wstring key_error;
+    std::vector<std::uint8_t> key;
+    if (load_short_code_key(data_directory, &key, &key_error)) {
+      approval_state.short_key = key;
+      log_line(data_directory,
+               L"short_code_ready key=" +
+                   usb_dlp::utf8_to_wide(usb_dlp::crypto::base32_encode(&key[0], key.size())));
+    } else {
+      log_line(data_directory, L"short_key_error " + key_error);
+    }
+  } else {
+    log_line(data_directory, L"short_code_disabled_by_config");
+  }
+  notifier.set_approval_handler(handle_approval_code, &approval_state);
   OwnedDevices owned_devices;
   if (!load_owned_devices(secure_store, &owned_devices, &storage_error)) {
     log_line(data_directory, L"owned_devices_load_error " + storage_error);
@@ -503,10 +939,21 @@ int run_agent(HANDLE stop_event) {
   std::set<std::wstring> requested_nodes;
   std::set<std::wstring> previous_present_nodes;
   std::set<std::wstring> previous_device_diagnostics;
+#ifndef USB_DLP_LEGACY_XP
+  const bool backstop_enabled = read_bool(ini, L"Backstop", true);
+  usb_dlp::RegistryBackstop backstop;
+  std::wstring backstop_error;
+  if (backstop_enabled && !backstop.initialize(data_directory, &backstop_error)) {
+    log_line(data_directory, L"backstop_init_error " + backstop_error);
+  }
+  std::int64_t backstop_policy_version = -1;
+  bool backstop_conflict_logged = false;
+#endif
   DWORD last_policy_poll = GetTickCount() - policy_poll_ms;
   log_line(data_directory,
-           dry_run ? L"agent_start build=" USB_DLP_BUILD_STAMP L" dry_run=true"
-                   : L"agent_start build=" USB_DLP_BUILD_STAMP L" dry_run=false default_deny=true");
+           (dry_run ? std::wstring(L"agent_start build=") : std::wstring(L"agent_start build=")) +
+               usb_dlp::utf8_to_wide(USB_DLP_BUILD_STAMP) +
+               (dry_run ? L" dry_run=true" : L" dry_run=false default_deny=true"));
 #ifdef USB_DLP_XP_SETUPAPI
   log_line(data_directory, L"enforcement_backend=setupapi_propertychange");
 #elif defined(USB_DLP_XP_FILTER)
@@ -566,6 +1013,62 @@ int run_agent(HANDLE stop_event) {
       }
     }
 
+#ifndef USB_DLP_LEGACY_XP
+    // Publish the passive baseline whenever the effective policy changes. It is
+    // deliberately NOT reverted when this loop exits: the whole point is that it
+    // outlives the service. Only an explicit --restore-backstop, run by the
+    // uninstall path, removes it.
+    if (backstop_enabled && backstop_policy_version != policy.policy_version) {
+      FILETIME backstop_file_time = {};
+      GetSystemTimeAsFileTime(&backstop_file_time);
+      ULARGE_INTEGER backstop_ticks = {};
+      backstop_ticks.LowPart = backstop_file_time.dwLowDateTime;
+      backstop_ticks.HighPart = backstop_file_time.dwHighDateTime;
+      const std::int64_t backstop_now_ms = static_cast<std::int64_t>(
+          (backstop_ticks.QuadPart - 116444736000000000ULL) / 10000ULL);
+      std::vector<std::wstring> allow_ids;
+      std::vector<std::wstring> deny_ids;
+      for (const usb_dlp::DeviceEntry& entry : policy.entries) {
+        if (entry.has_expiry && entry.expires_at_utc_ms <= backstop_now_ms) continue;
+        if (entry.instance_id.empty()) continue;
+        // Only instance IDs are published. Hardware and compatible IDs are model
+        // level and would approve every unit of that model, including devices the
+        // administrator never saw.
+        if (entry.match_type != usb_dlp::MatchType::instance_id) continue;
+        if (entry.action == usb_dlp::EntryAction::allow) {
+          allow_ids.push_back(usb_dlp::utf8_to_wide(entry.instance_id));
+        } else {
+          deny_ids.push_back(usb_dlp::utf8_to_wide(entry.instance_id));
+        }
+      }
+      const bool default_deny_mode = policy.group_mode == usb_dlp::GroupMode::default_deny;
+      const usb_dlp::BackstopResult backstop_result =
+          backstop.apply(default_deny_mode, allow_ids, deny_ids, dry_run);
+      backstop_policy_version = policy.policy_version;
+      const std::wstring mode_name =
+          default_deny_mode ? std::wstring(L"default_deny") : std::wstring(L"default_allow");
+      if (backstop_result.conflict) {
+        if (!backstop_conflict_logged) {
+          log_line(data_directory,
+                   L"external_policy_conflict component=device_install_restrictions detail=" +
+                       backstop_result.detail + L" active_enforcement_continues=true");
+          backstop_conflict_logged = true;
+        }
+      } else if (backstop_result.applied) {
+        backstop_conflict_logged = false;
+        log_line(data_directory, L"backstop_applied mode=" + mode_name +
+                                     L" allow=" + std::to_wstring(backstop_result.allow_values) +
+                                     L" expanded=" + std::to_wstring(backstop_result.expanded_ids) +
+                                     L" deny=" + std::to_wstring(deny_ids.size()));
+      } else if (backstop_result.unchanged) {
+        log_line(data_directory, L"backstop_unchanged mode=" + mode_name +
+                                     L" allow=" + std::to_wstring(backstop_result.allow_values));
+      } else {
+        log_line(data_directory, L"backstop_skipped detail=" + backstop_result.detail);
+      }
+    }
+#endif
+
     std::vector<usb_dlp::WindowsDevice> devices;
     std::vector<std::wstring> device_diagnostics;
     std::wstring error;
@@ -588,6 +1091,49 @@ int run_agent(HANDLE stop_event) {
         previous_device_diagnostics = current_device_diagnostics;
       }
       std::set<std::wstring> present_nodes;
+      // Apply grants the approval handler queued on the notifier thread. The
+      // policy object stays owned by this loop, so the handler only appends.
+      if (!approval_state.pending.empty()) {
+        std::vector<usb_dlp::DeviceEntry> applied;
+        EnterCriticalSection(&approval_state.lock);
+        applied.swap(approval_state.pending);
+        LeaveCriticalSection(&approval_state.lock);
+        bool changed = false;
+        for (const usb_dlp::DeviceEntry& entry : applied) {
+          bool duplicate = false;
+          for (const usb_dlp::DeviceEntry& existing : policy.entries) {
+            if (existing.instance_id == entry.instance_id && existing.action == entry.action) {
+              duplicate = true;
+              break;
+            }
+          }
+          if (duplicate) continue;
+          policy.entries.push_back(entry);
+          policy.policy_version += 1;
+          changed = true;
+          log_line(data_directory, L"approval_entry_added instance_id=" +
+                                       usb_dlp::utf8_to_wide(entry.instance_id) +
+                                       L" expires_utc_ms=" +
+                                       std::to_wstring(entry.expires_at_utc_ms));
+        }
+        if (changed) {
+          std::string approvals_text;
+          std::wstring reload_error;
+          if (secure_store.load(L"approvals.dat", &approvals_text, &reload_error)) {
+            // keep what was there
+          } else {
+            approvals_text.clear();
+          }
+          const std::vector<usb_dlp::DeviceEntry> merged =
+              parse_approval_entries(approvals_text);
+          std::vector<usb_dlp::DeviceEntry> combined = merged;
+          for (const usb_dlp::DeviceEntry& entry : applied) combined.push_back(entry);
+          if (!secure_store.save(L"approvals.dat", serialize_approval_entries(combined),
+                                 &reload_error)) {
+            log_line(data_directory, L"approvals_save_error " + reload_error);
+          }
+        }
+      }
       FILETIME file_time = {};
       GetSystemTimeAsFileTime(&file_time);
       ULARGE_INTEGER ticks = {};
@@ -596,30 +1142,35 @@ int run_agent(HANDLE stop_event) {
       std::int64_t unix_ms = static_cast<std::int64_t>((ticks.QuadPart - 116444736000000000ULL) / 10000ULL);
       {
         // Moving the system clock backwards must not revive an expired grant.
-        // Keep a high-water mark and never evaluate policy against an earlier
-        // instant than the latest one we have already seen.
-        static std::int64_t clock_high_water_ms = 0;
+        // The high-water mark now lives on disk, so a reboot cannot reset it.
         static std::int64_t clock_rollback_logged_ms = 0;
-        if (unix_ms + 2000 < clock_high_water_ms) {
-          if (clock_high_water_ms - unix_ms > 60000 &&
-              clock_high_water_ms - clock_rollback_logged_ms > 300000) {
-            log_line(data_directory, L"clock_rollback_detected enforced_utc_ms=" +
-                                         std::to_wstring(clock_high_water_ms) +
-                                         L" raw_utc_ms=" + std::to_wstring(unix_ms));
-            clock_rollback_logged_ms = clock_high_water_ms;
-          }
-          unix_ms = clock_high_water_ms;
-        } else if (unix_ms > clock_high_water_ms) {
-          clock_high_water_ms = unix_ms;
+        bool rolled_back = false;
+        std::int64_t previous_ms = 0;
+        const std::int64_t trusted_ms = trusted_clock.apply(unix_ms, &rolled_back, &previous_ms);
+        if (rolled_back && previous_ms - unix_ms > 60000 &&
+            trusted_ms - clock_rollback_logged_ms > 300000) {
+          log_line(data_directory, L"clock_rollback_detected enforced_utc_ms=" +
+                                       std::to_wstring(trusted_ms) +
+                                       L" raw_utc_ms=" + std::to_wstring(unix_ms));
+          clock_rollback_logged_ms = trusted_ms;
         }
+        unix_ms = trusted_ms;
       }
       for (const usb_dlp::WindowsDevice& device : devices) {
         present_nodes.insert(device.instance_id);
         const bool newly_present =
             previous_present_nodes.find(device.instance_id) == previous_present_nodes.end();
         usb_dlp::PolicyError policy_error("");
-        const usb_dlp::PolicyEvaluation evaluation =
+        usb_dlp::PolicyEvaluation evaluation =
             usb_dlp::evaluate_policy(device.policy_device, policy, unix_ms, &policy_error);
+        // The WPD mirror of an approved disk must not be blocked on its own.
+        if (evaluation.decision == usb_dlp::Decision::block && is_wpd_mirror(device.instance_id)) {
+          const std::wstring parent = wpd_parent_instance_id(device.instance_id);
+          if (!parent.empty() && policy_allows_instance(policy, parent, unix_ms)) {
+            evaluation.decision = usb_dlp::Decision::allow;
+            evaluation.reason_code = "wpd_parent_allowed";
+          }
+        }
         if (newly_present) {
           log_line(data_directory, L"device_seen instance_id=" + device.instance_id +
                                        L" class=" + device_class_name(device.policy_device.device_class) +
@@ -754,6 +1305,63 @@ int run_agent(HANDLE stop_event) {
           notifier.publish_allowed(device.instance_id);
         }
       }
+      // Devices this agent disabled in an earlier run are missing from the
+      // present-only scan, so a service restart used to leave them blocked with
+      // no prompt at all: the drive simply looked broken. Re-announce what is
+      // still attached, and bring back anything that has since been approved.
+      std::vector<std::wstring> released_owned;
+      static bool owned_scan_logged = false;
+      const bool log_owned_scan = !owned_scan_logged;
+      if (log_owned_scan) {
+        owned_scan_logged = true;
+        log_line(data_directory, L"owned_device_scan count=" +
+                                     std::to_wstring(owned_devices.size()) +
+                                     L" enumerated=" + std::to_wstring(devices.size()));
+      }
+      for (const std::pair<const std::wstring, usb_dlp::WindowsDevice>& owned : owned_devices) {
+        const usb_dlp::WindowsDevice& owned_device = owned.second;
+        const bool in_present = present_nodes.find(owned_device.instance_id) != present_nodes.end();
+        const bool still_attached = device_is_present(owned_device.instance_id);
+        if (log_owned_scan) {
+          log_line(data_directory, L"owned_device_check instance_id=" + owned_device.instance_id +
+                                       L" enumerated=" + (in_present ? L"true" : L"false") +
+                                       L" attached=" + (still_attached ? L"true" : L"false"));
+        }
+        if (in_present) continue;
+        if (!still_attached) continue;
+        usb_dlp::PolicyError owned_policy_error("");
+        usb_dlp::PolicyEvaluation owned_evaluation =
+            usb_dlp::evaluate_policy(owned_device.policy_device, policy, unix_ms, &owned_policy_error);
+        if (owned_evaluation.decision == usb_dlp::Decision::block &&
+            is_wpd_mirror(owned_device.instance_id)) {
+          const std::wstring owned_parent = wpd_parent_instance_id(owned_device.instance_id);
+          if (!owned_parent.empty() && policy_allows_instance(policy, owned_parent, unix_ms)) {
+            owned_evaluation.decision = usb_dlp::Decision::allow;
+            owned_evaluation.reason_code = "wpd_parent_allowed";
+          }
+        }
+        if (owned_evaluation.decision == usb_dlp::Decision::allow) {
+          unsigned long enable_result = 0;
+          std::wstring enable_diagnostic;
+          if (!dry_run &&
+              enforcer.enable(owned_device.instance_id, &enable_result, &enable_diagnostic)) {
+            released_owned.push_back(owned_device.instance_id);
+            notifier.publish_allowed(owned_device.instance_id);
+            log_line(data_directory, L"owned_device_reenabled instance_id=" +
+                                         owned_device.instance_id +
+                                         L" result=" + std::to_wstring(enable_result));
+          }
+          continue;
+        }
+        present_nodes.insert(owned_device.instance_id);
+        notifier.publish_denied(owned_device, owned_evaluation.reason_code, true, false);
+      }
+      for (const std::wstring& released : released_owned) owned_devices.erase(released);
+      if (!released_owned.empty()) {
+        if (!save_owned_devices(secure_store, owned_devices, &storage_error)) {
+          log_line(data_directory, L"owned_devices_save_error " + storage_error);
+        }
+      }
       for (const std::wstring& prior : previous_present_nodes) {
         if (present_nodes.find(prior) == present_nodes.end()) notifier.publish_removed(prior);
       }
@@ -787,12 +1395,45 @@ void WINAPI service_main(DWORD, wchar_t**) {
   report_status(SERVICE_STOPPED, static_cast<DWORD>(result), 0);
 }
 
+
 }  // namespace
+
+#ifndef USB_DLP_LEGACY_XP
+namespace {
+
+// Uninstall path: put the Device Installation Restrictions values back the way
+// they were before this agent published a baseline. Values someone else changed
+// in the meantime are left alone.
+int restore_backstop() {
+  const std::wstring common_data = usb_dlp::common_application_data_path();
+  if (common_data.empty()) return ERROR_PATH_NOT_FOUND;
+  const std::wstring data_directory = join_path(common_data, L"UsbDlp");
+  usb_dlp::RegistryBackstop backstop;
+  std::wstring error;
+  if (!backstop.initialize(data_directory, &error)) {
+    std::fwprintf(stderr, L"restore_backstop_failed error=\"%ls\"\n", error.c_str());
+    return ERROR_ACCESS_DENIED;
+  }
+  if (!backstop.restore(&error)) {
+    std::fwprintf(stderr, L"restore_backstop_failed error=\"%ls\"\n", error.c_str());
+    return ERROR_WRITE_FAULT;
+  }
+  std::fwprintf(stdout, L"restore_backstop_succeeded note=\"%ls\"\n", error.c_str());
+  return 0;
+}
+
+}  // namespace
+#endif
 
 int wmain(int argc, wchar_t** argv) {
   if (argc == 2 && std::wstring(argv[1]) == L"--restore-owned") {
     return restore_owned_devices();
   }
+#ifndef USB_DLP_LEGACY_XP
+  if (argc == 2 && std::wstring(argv[1]) == L"--restore-backstop") {
+    return restore_backstop();
+  }
+#endif
   if (argc == 5 && std::wstring(argv[1]) == L"--configure") {
     return configure_agent(argv[2], argv[3], argv[4]);
   }
