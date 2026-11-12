@@ -431,9 +431,18 @@ Residual limitation: a previously installed device that the active agent has nev
 remain usable during the service outage. This accepted user-mode limitation MUST appear in the
 threat model, deployment guide, and release notes.
 
-On Windows 7, the OS adapter MUST capability-test layered Device Installation Restrictions before
-claiming a passive backstop. On XP, the layered allow-over-deny policy is unavailable and the
-legacy agent MUST NOT emulate it with class-wide registry deletion. The default XP user-mode
+Windows 7 has no layered evaluation: the "Apply layered order of evaluation for Allow and
+Prevent device installation policies across all device match criteria" policy requires Windows
+10 2106 or Windows Server 2016, so it cannot be claimed on the 6.1 line. The OS adapter MUST
+express default-deny as `DenyUnspecified=1` plus an `AllowDeviceIDs` list, the Vista-era form of
+the same policy, and MUST NOT combine `DenyRemovableDevices=1` with that allow list: without
+layering every specific deny outranks every allow, so the allow list would be neutralised and
+per-device approval would stop working. The allow list MUST carry instance IDs only. Hardware
+and compatible IDs are model level and would approve every unit of that model. Because one USB
+mass-storage device installs as several devnodes, the adapter MUST expand the approved device's
+devnode chain (the USB function node and its USBSTOR children) before publishing, or the approved
+device still fails to install. On XP, no Device Installation Restrictions policy layer exists and
+the legacy agent MUST NOT emulate it with class-wide registry deletion. The default XP user-mode
 profile therefore uses active per-devnode enforcement plus SCM automatic recovery. An optional machine-wide `USBSTOR` disabled
 baseline may be selected only for workstations that never need an approved mass-storage device.
 For normal per-device approval, an XP service outage creates a documented fail-open reattachment

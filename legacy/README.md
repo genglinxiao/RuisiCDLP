@@ -18,8 +18,15 @@ projects, and deployment-kit templates.
   Windows 11 build host. A Windows XP Professional SP3 Hyper-V smoke run on 2026-08-28
   passed agent/server MSI installation, live default-deny service startup, enrollment,
   policy synchronization, native policy/DPAPI tests, and authenticated remote inventory.
-  Physical USB enforcement, notifier interaction, service-down behavior, TLS, upgrade,
-  removal, and real-hardware qualification are still required.
+  On 2026-11-04 a physical Windows XP SP3 x86 machine (Lenovo E40) completed a 20-cycle
+  plug/unplug run against the `cm` backend: 21 device sessions, 0 misses, worst block
+  latency under 1 s, and 18 of 21 insertions arrived already disabled because the disabled
+  state persists on the device instance. That run also exercised the
+  request/approve/revoke chain end to end and found that a revoked or expired device stays
+  readable for about 57 s while the devnode sits in `DN_WILL_BE_REMOVED` behind an open
+  volume handle. That 57 s disconnect window, the three fixes built but not yet re-tested on
+  hardware, notifier interaction, service-down behavior, TLS, upgrade, and removal remain
+  outstanding.
 
 The native HTTP transport intentionally refuses to imply production TLS support. The
 client requires `AllowInsecureHttp=1`, and the server requires the equivalent explicit
@@ -34,6 +41,33 @@ Configure XP x86 with the `v141_xp` toolset and
 `USB_DLP_TARGET_PROFILE=legacy-xp-x86`. Build `Release`, then run
 `scripts/build-legacy-kits.ps1`. Generated kits are placed under
 `artifacts/legacy-kits` and are marked `UNVERIFIED`.
+
+## Passive installation backstop
+
+`src/windows/policy_registry.cpp` publishes the documented Device Installation Restrictions
+policy so that an unapproved device is still refused while the service is stopped. It is
+compiled into the Windows 7 and Windows 10 kits and **excluded at compile time from
+`legacy-xp-x86`**, because XP has no such policy layer; the XP binary contains none of that
+code path and keeps exactly the behaviour it was qualified with.
+
+- Windows 7 and 8.x have no layered evaluation, so default-deny is published as
+  `DenyUnspecified=1` plus an `AllowDeviceIDs` list. `DenyRemovableDevices` is deliberately not
+  set: without layering it outranks the allow list and would break every approval.
+- Only instance IDs are published. Hardware and compatible IDs are model level and would approve
+  every unit of a model the administrator never saw.
+- A USB mass-storage device installs as a USB function node plus one or more USBSTOR children, so
+  the approved device's devnode chain is expanded before publishing. A single instance ID is not
+  enough for the device to install under `DenyUnspecified`.
+- The before-image is written to `backstop-manifest.dat` in the ACL-protected data directory and
+  values are restored only where the current value still equals what the agent wrote. Any
+  externally owned value makes the agent report `external_policy_conflict` and leave the policy
+  key untouched rather than overwrite a domain GPO or another product.
+- The backstop survives a service stop by design and is therefore **not** reverted on exit. It is
+  removed by `UsbDlp.LegacyAgent.exe --restore-backstop`, which `Uninstall-Client.cmd` runs before
+  removing the MSI.
+- Residual limitation, unchanged from the spec: a device that was already installed before the
+  baseline was published can remain usable during a service outage, because
+  `DenyUnspecified` only governs new installations.
 
 ## XP Hyper-V smoke test
 
