@@ -19,29 +19,43 @@ if(USB_DLP_TARGET_PROFILE STREQUAL "legacy-xp-x86")
   endif()
 endif()
 
-# The current Visual C++ redistributable does not run on XP. Keep the XP
-# package self-contained by linking the supported v141_xp runtime statically.
-if(USB_DLP_TARGET_PROFILE STREQUAL "legacy-xp-x86")
+# The current Visual C++ redistributable does not run on XP, and the fab-side
+# machines this product targets are offline (no Windows Update, no VC++ redist).
+# Link the CRT statically for every legacy profile so the kit stays self-contained.
+if(USB_DLP_TARGET_PROFILE MATCHES "legacy-")
   set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 endif()
 
 project(RuisiUsbDlpLegacy VERSION 1.1.0 LANGUAGES CXX)
 
 if(MSVC)
+  # The notifier ships localized strings, so the compiler must read sources as
+  # UTF-8 regardless of the build machine's ANSI code page. Without this, a
+  # Chinese literal is decoded as GBK and the UI shows mojibake.
+  add_compile_options(/utf-8)
   add_compile_options(/W4 /WX /Zc:__cplusplus /EHsc)
   add_definitions(-DUNICODE -D_UNICODE -DWIN32_LEAN_AND_MEAN -DNOMINMAX)
   if(USB_DLP_TARGET_PROFILE STREQUAL "legacy-xp-x86")
     # The Windows 7.1A objbase.h templates do not compile under /permissive-.
     add_compile_options(/permissive)
-    add_definitions(-D_WIN32_WINNT=0x0501 -DWINVER=0x0501 -DNTDDI_VERSION=0x05010300)
+    # Windows XP has no Device Installation Restrictions policy layer at all.
+    # Mark the profile so the passive backstop is excluded at compile time and
+    # the XP binary keeps exactly the behaviour it was qualified with.
+    add_definitions(-D_WIN32_WINNT=0x0501 -DWINVER=0x0501 -DNTDDI_VERSION=0x05010300
+                    -DUSB_DLP_LEGACY_XP=1)
     set(USB_DLP_SUBSYSTEM_VERSION "5.01")
   elseif(USB_DLP_TARGET_PROFILE MATCHES "legacy-win7")
     add_compile_options(/permissive-)
-    add_definitions(-D_WIN32_WINNT=0x0601 -DWINVER=0x0601 -DNTDDI_VERSION=0x06010000)
+    # Vista+ winsock2.h marks inet_addr/inet_ntoa deprecated; /WX turns that
+    # into a build break. The call sites parse a bind address and are correct
+    # as written, so silence the SDK deprecation instead of rewriting them.
+    add_definitions(-D_WIN32_WINNT=0x0601 -DWINVER=0x0601 -DNTDDI_VERSION=0x06010000
+                    -D_WINSOCK_DEPRECATED_NO_WARNINGS)
     set(USB_DLP_SUBSYSTEM_VERSION "6.01")
   elseif(USB_DLP_TARGET_PROFILE MATCHES "legacy-win10")
     add_compile_options(/permissive-)
-    add_definitions(-D_WIN32_WINNT=0x0A00 -DWINVER=0x0A00 -DNTDDI_VERSION=0x0A000000)
+    add_definitions(-D_WIN32_WINNT=0x0A00 -DWINVER=0x0A00 -DNTDDI_VERSION=0x0A000000
+                    -D_WINSOCK_DEPRECATED_NO_WARNINGS)
     set(USB_DLP_SUBSYSTEM_VERSION "6.00")
   else()
     add_compile_options(/permissive-)
@@ -52,6 +66,9 @@ add_library(usb_dlp_legacy_core STATIC
   src/json.cpp
   src/policy.cpp
   src/policy_json.cpp
+  src/crypto.cpp
+  src/approval.cpp
+  src/approval_key.cpp
 )
 target_include_directories(usb_dlp_legacy_core PUBLIC include)
 target_compile_features(usb_dlp_legacy_core PUBLIC cxx_std_14)
@@ -71,6 +88,11 @@ if(WIN32)
     src/windows/device_enumerator.cpp
     src/windows/device_enforcer.cpp
   )
+  # The passive installation baseline is Vista and newer only. Excluding the
+  # translation unit for XP keeps that binary byte-for-byte free of the code path.
+  if(NOT USB_DLP_TARGET_PROFILE STREQUAL "legacy-xp-x86")
+    target_sources(usb_dlp_legacy_windows PRIVATE src/windows/policy_registry.cpp)
+  endif()
   target_include_directories(usb_dlp_legacy_windows PUBLIC include)
   target_link_libraries(usb_dlp_legacy_windows PUBLIC usb_dlp_legacy_core setupapi ${USB_DLP_CONFIG_MANAGER_LIBRARY} advapi32 crypt32 shell32 winhttp ole32 netapi32 userenv wtsapi32)
   target_compile_features(usb_dlp_legacy_windows PUBLIC cxx_std_14)
@@ -78,8 +100,9 @@ if(WIN32)
   add_executable(UsbDlp.LegacyAgent src/windows/agent_main.cpp)
   target_link_libraries(UsbDlp.LegacyAgent PRIVATE usb_dlp_legacy_windows)
   target_compile_definitions(UsbDlp.LegacyAgent PRIVATE USB_DLP_PROFILE="${USB_DLP_TARGET_PROFILE}")
-  string(TIMESTAMP USB_DLP_BUILD_STAMP "%Y-%m-%dT%H:%MZ" UTC)
-  target_compile_definitions(UsbDlp.LegacyAgent PRIVATE USB_DLP_BUILD_STAMP="${USB_DLP_BUILD_STAMP}")
+  # The build stamp is produced by the compiler (__DATE__/__TIME__) inside
+  # agent_main.cpp. A configure-time timestamp here would go stale on every
+  # plain "cmake --build" and make the log name the wrong binary.
 
   add_executable(UsbDlp.LegacyNotifier WIN32 src/windows/notifier_main.cpp)
   target_link_libraries(UsbDlp.LegacyNotifier PRIVATE usb_dlp_legacy_windows)
@@ -106,6 +129,10 @@ if(USB_DLP_BUILD_TESTS)
   add_executable(usb_dlp_legacy_policy_tests tests/policy_tests.cpp)
   target_link_libraries(usb_dlp_legacy_policy_tests PRIVATE usb_dlp_legacy_core)
   add_test(NAME T-M10-01-policy-parity COMMAND usb_dlp_legacy_policy_tests)
+
+  add_executable(usb_dlp_legacy_approval_tests tests/approval_tests.cpp)
+  target_link_libraries(usb_dlp_legacy_approval_tests PRIVATE usb_dlp_legacy_core)
+  add_test(NAME T-M10-07-approval-codec COMMAND usb_dlp_legacy_approval_tests)
   if(WIN32)
     add_executable(usb_dlp_legacy_store_tests tests/secure_store_tests.cpp)
     target_link_libraries(usb_dlp_legacy_store_tests PRIVATE usb_dlp_legacy_windows)
